@@ -5,8 +5,8 @@ from websockets.client import connect
 from picozero import pico_led
 import utime
 
-async def connect_ws():
-    ws = await connect("ws://192.168.178.63:8000/ws/1234")
+async def connect_ws(ip, server):
+    ws = await connect("ws://" + server + ":8000/ws/1234")
     if not ws:
         print("Verbindung fehlgeschlagen")
         return
@@ -47,7 +47,7 @@ async def connect_ws():
             last_msg_time = utime.ticks_ms()
             await handle_message(msg)
     except Exception as e:
-        print("Fehler:", e)
+        print("Error:", e)
     finally:
         while utime.ticks_diff(utime.ticks_ms(), last_msg_time) < 200:
             await uasyncio.sleep(0.1)  # Warte, bis 500 ms abgelaufen sind
@@ -58,7 +58,10 @@ async def connect_ws():
 try:
     # Bootup
     pico_led.off()
-    ip = tools.connect()
+    ip, server = tools.connect()
+    print("Connecting to server", server)
+    loop = uasyncio.get_event_loop()
+    loop.run_until_complete(connect_ws(ip, server))
 
 except KeyboardInterrupt:
     machine.reset()
@@ -66,6 +69,4 @@ except:
     tools.blink(20,0.1)
     machine.reset()
 
-loop = uasyncio.get_event_loop()
-loop.run_until_complete(connect_ws())
 #loop.run_forever()

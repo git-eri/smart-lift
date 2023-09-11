@@ -68,7 +68,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
 
 
 @app.websocket("/cs/{controller_id}")
-async def websocket_endpoint(websocket: WebSocket, controller_id: int):
+async def websocket_controller(websocket: WebSocket, controller_id: int):
     """Communicates with the controller-side application."""
     await manager.connect(websocket)
     try:

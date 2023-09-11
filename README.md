@@ -1,68 +1,38 @@
-# locate-backend
-[![pipeline status](https://gitlab.erikj.de/locate/locate-backend/badges/dev/pipeline.svg)](https://gitlab.erikj.de/locate/locate-backend/-/commits/dev)
-[![coverage report](https://gitlab.erikj.de/locate/locate-backend/badges/dev/coverage.svg)](https://gitlab.erikj.de/locate/locate-backend/-/commits/dev)
-[![Latest Release](https://gitlab.erikj.de/locate/locate-backend/-/badges/release.svg)](https://gitlab.erikj.de/locate/locate-backend/-/releases)
-
+# smart-lift
 
 ## Getting Started
 
-This project is the backend for the locate project. It is written in python and uses FastAPI as a framework. The database is a mariadb database.
+This project is a web application for a smart lift system. 
 
-### .env
+It is written in Python and uses FastAPI as a web framework. The frontend is written in HTML and Javascript and uses websockets to communicate with the server.
 
-Take the ```default.env``` file and change the values to your needs. Then rename this file to ```.env```
+The server communicates to one or more controllers with websockets too. The controllers are programmed with MicroPython and run on a Raspberry Pi Pico.
+
 
 ## Local Development
 
 ### What you need
 
 - Docker
-- Python 3.10 (pip & venv)
+- Python 3.10
+- Raspberry Pi Pico
 
 Lint before commit!
 ```bash
 $ pylint app
 ```
 
-### local python with docker
-
-Run backend containers before running the api locally.
-
-Linux (Ubuntu/Debian)
-```bash
-$ sudo apt install python3.10-venv libmariadb3 libmariadb-dev
-$ python3 -m venv env
-$ source ./env/bin/activate
-$ pip install -r requirements.txt
-$ python3 -m src
-```
-
-Windows PowerShell
-```powershell
-$ python -m venv env
-$ .\env\Scripts\Activate.ps1
-$ python -m pip install --upgrade pip
-$ pip install -r requirements.txt
-$ python -m src
-```
-
-macOS (Not tested!)
-```bash
-$ python3 -m venv env
-$ source ./env/bin/activate
-$ pip install -r requirements.txt
-$ python3 -m src
-```
 
 ## Server
-The server handles the communication between the controller and the frontend. It communicates between the clients via websockets and the controller via http requests.
+The server handles the communication between the controllers and the clients.
 
 ### Development
 
 For local testing
 
 ```bash
-uvicorn app.main:app --port 8000 --reload --host 0.0.0.0
+$ cd server
+$ uvicorn app.main:app --port 8000 --reload --host 0.0.0.0
 ```
 
 ### Deployment
@@ -78,6 +48,18 @@ $ ???
 ## Controller (Pico)
 
 The controller is connected via wifi and should have its own ip address. The server communicates to the controller via http requests. The controller talks back to the server to give information which lifts are active and if the system is healthy.
+
+### auth.json
+
+This file holds informations about possible wifi networks to connect with and the ip address of the server for that network. It should look like this and should be placed in the root directory of the controller:
+
+```json
+{
+    "ssid": "wifi-name",
+    "password": "wifi-password",
+    "server": "ip address of server"
+}
+```
 
 
 

@@ -25,6 +25,7 @@ def connect():
     wlan.config(pm = 0xa11140) # type: ignore # disable power saving
     wlan.active(True)
     ssid = None
+    server = None
     # Search for known networks
     while not ssid:
         print("Search for networks")
@@ -35,6 +36,7 @@ def connect():
                 if known_net[net]["ssid"] == w[0].decode():
                     ssid = known_net[net]["ssid"]
                     password = known_net[net]["password"]
+                    server = known_net[net]["server"]
                     print(f"Connecting to {ssid}...")
                     wlan.connect(ssid, password)
                     break
@@ -46,11 +48,11 @@ def connect():
         print('Waiting for connection...')
         sleep(1)
     ip = wlan.ifconfig()
-    print('IPv4-Adresse:', ip[0], '/', ip[1])
+    print('IPv4-Address:', ip[0], '/', ip[1])
     print('Standard-Gateway:', ip[2])
     print('DNS-Server:', ip[3])
     blink(5, 0.05)
-    return ip[0]
+    return ip[0], server
 
 def open_socket(ip):
     address = (ip, 80)
