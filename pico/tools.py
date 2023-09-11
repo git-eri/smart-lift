@@ -59,6 +59,12 @@ def open_socket(ip):
     connection.listen(1)
     return connection
 
+def connect_to_server(ip):
+    address = (ip, 80)
+    connection = socket.socket()
+    connection.connect(address)
+    return connection
+
 def blink(amount, speed):
     pico_led.off()
     for i in range(amount):

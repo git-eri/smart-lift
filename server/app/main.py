@@ -31,7 +31,12 @@ manager = ConnectionManager()
 
 templates = Jinja2Templates(directory="app/templates")
 
-lifts_data = [
+controllers = [
+    {"id": "0", "name": "Controller 1", "ip": "192.168.178.23"},
+    {"id": "1", "name": "Controller 2", "ip": "192.168.178.24"},
+]
+
+lifts = [
     {"id": "0", "name": "Lift 1"},
     {"id": "1", "name": "Lift 2"},
     {"id": "2", "name": "Lift 3"},
@@ -44,7 +49,7 @@ lifts_data = [
 @app.get("/")
 async def read_root(request: Request):
     """Serve the client-side application."""
-    return templates.TemplateResponse("dashboard.html", {"request": request, "lifts": lifts_data})
+    return templates.TemplateResponse("dashboard.html", {"request": request, "lifts": lifts})
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: int):
@@ -54,9 +59,25 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
         while True:
             data = await websocket.receive_text()
             print(f"{client_id},{data}")
-            await manager.send_personal_message(f"outgoing,{client_id},{data}", websocket)
+            # await manager.send_personal_message(f"outgoing,{client_id},{data}", websocket)
             await manager.broadcast(f"incoming,{client_id},{data}")
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         print(f"msg,'Client #{client_id} left'")
         await manager.broadcast(f"msg,'Client #{client_id} left'")
+
+
+@app.websocket("/cs/{controller_id}")
+async def websocket_endpoint(websocket: WebSocket, controller_id: int):
+    """Communicates with the controller-side application."""
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            print(f"{controller_id},{data}")
+            await manager.send_personal_message(f"outgoing,{controller_id},{data}", websocket)
+            await manager.broadcast(f"incoming,{controller_id},{data}")
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+        print(f"msg,'Controller #{controller_id} left'")
+        await manager.broadcast(f"msg,'Client #{controller_id} left'")

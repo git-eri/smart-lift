@@ -102,7 +102,7 @@
     <div class="menubar">
         <h2>Lift Control Admin Panel</h2>
         <!--estop sollte alles blocken und muss erst entsperrt werden-->
-        <button class="e-stop" onpointerdown="estop()">STOP</button>
+        <button class="e-stop" onpointerdown="emergencyStop()">STOP</button>
     </div>
     <div class="lifts">
         {% for lift in lifts %}
@@ -111,19 +111,19 @@
             <div class="table">
                 <div class="buttons" id="up">
                     <div class="button-container">
-                        <button class="button" onpointerdown="buttonHold('{{ lift.id }}', 0)" onpointerleave="buttonHoldEnd('{{ lift.id }}', 0)" onpointerup="buttonHoldEnd('{{ lift.id }}', 0)">Up</button>
+                        <button class="button" onpointerdown="buttonHold('lift', '{{ lift.id }}', 0)" onpointerleave="buttonHoldEnd('lift', '{{ lift.id }}', 0)" onpointerup="buttonHoldEnd('lift', '{{ lift.id }}', 0)">Up</button>
                     </div>
                     <div class="indicator"></div>
                 </div>
                 <div class="buttons" id="down">
                     <div class="button-container">
-                        <button class="button" onpointerdown="buttonHold('{{ lift.id }}', 1)" onpointerleave="buttonHoldEnd('{{ lift.id }}', 1)" onpointerup="buttonHoldEnd('{{ lift.id }}', 1)">Down</button>
+                        <button class="button" onpointerdown="buttonHold('lift', '{{ lift.id }}', 1)" onpointerleave="buttonHoldEnd('lift', '{{ lift.id }}', 1)" onpointerup="buttonHoldEnd('lift', '{{ lift.id }}', 1)">Down</button>
                     </div>
                     <div class="indicator"></div>
                 </div>
                 <div class="buttons" id="lock">
                     <div class="button-container">
-                        <button class="button" onpointerdown="buttonHold('{{ lift.id }}', 2)" onpointerleave="buttonHoldEnd('{{ lift.id }}', 2)" onpointerup="buttonHoldEnd('{{ lift.id }}', 2)">Lock</button>
+                        <button class="button" onpointerdown="buttonHold('lift', '{{ lift.id }}', 2)" onpointerleave="buttonHoldEnd('lift', '{{ lift.id }}', 2)" onpointerup="buttonHoldEnd('lift', '{{ lift.id }}', 2)">Lock</button>
                     </div>
                     <div class="indicator"></div>
                 </div>
@@ -141,29 +141,29 @@
         var prev_event;
         let lastMessageTime = 0;
         let messageTimer;
-        var ws = new WebSocket(`ws://localhost:8000/ws/${client_id}`);
+        var ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/${client_id}`);
 
-        function buttonHold(lift_id, index) {
+        function buttonHold(event, lift_id, index) {
             counter = setInterval(function() {
                 sendMessage(event, lift_id, index);
                 count++;
             }, 200);
         }
 
-        function buttonHoldEnd(lift_id, index) {
+        function buttonHoldEnd(event, lift_id, index) {
             clearInterval(counter);
         }
 
         ws.onmessage = function(event) {
             var eventdata = event.data.split(",");
-            if (eventdata[0] === "incoming") {
+            if (eventdata[0] === "incoming" && eventdata[2] === "lift") {
                 lastMessageTime = Date.now();
                 if (messageTimer) {
                     clearTimeout(messageTimer);
                 }
 
-                const liftId = parseInt(eventdata[2]);
-                const eventIndex = parseInt(eventdata[3]);
+                const liftId = parseInt(eventdata[3]);
+                const eventIndex = parseInt(eventdata[4]);
 
                 // Prüfen, ob ein Timer für diesen Lift bereits existiert, und ihn löschen
                 if (liftTimers.has(liftId)) {
@@ -180,15 +180,18 @@
 
                 // Den Timer in der Map speichern
                 liftTimers.set(liftId, timer);
-            } else if (eventdata[0] === "event") {
-                // Handle andere Arten von WebSocket-Nachrichten hier
+            } else if (eventdata[0] === "incoming" && eventdata[2] === "stop") {
+                // Emergency Stop
                 console.log("EMERGENCY STOP")
+            } else {
+                // Handle andere Arten von WebSocket-Nachrichten hier
+                console.log("unhandled data:", event)
             }
         };
 
 
         function sendMessage(event, lift_id, direction) {
-            ws.send(lift_id + "," + direction)
+            ws.send(event + "," + lift_id + "," + direction)
         }
 
         function activateIndicator(lift_id, index) {
@@ -209,6 +212,10 @@
                     indicator.classList.remove('active');
                 }
             });
+        }
+
+        function emergencyStop() {
+            sendMessage('stop', 0, 0);
         }
 
 
