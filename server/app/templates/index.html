@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+
+        .menubar {
+            display: flex;
+            flex-direction: row;
+            padding-left: 10px;
+            padding-right: 10px;
+            justify-content: space-between;
+            align-items: center;
+            background-color: #3498db;
+        }
+
+        .lifts {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            justify-items: center;
+            padding: 20px;
+        }
+
+        .lift {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+            max-width: 300px;
+        }
+
+        .table {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .buttons {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+        }
+
+        .button {
+            width: 100px;
+            padding: 10px;
+            background-color: #3498db;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            margin: 5px;
+            text-align: center;
+            white-space: nowrap;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -khtml-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+
+        .e-stop {
+            width: 100px;
+            padding: 10px;
+            background-color: #e74c3c;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            margin: 5px;
+            text-align: center;
+            white-space: nowrap;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -khtml-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+
+        .indicator {
+            width: 20px;
+            height: 20px;
+            background-color: #ccc;
+            border-radius: 50%;
+            margin: 5px;
+        }
+
+        .active {
+            background-color: #2ecc71;
+        }
+    </style>
+</head>
+<body>
+    <div class="menubar">
+        <h2>Lift Control Admin Panel</h2>
+        <button class="e-stop" onpointerdown="sendMessage(event, 'all', 'stop')">STOP</button>
+    </div>
+    <div class="lifts">
+        {% for lift in lifts %}
+        <div class="lift" id="{{ lift.id }}">
+            <h3>{{ lift.name }}</h3>
+            <div class="table">
+                <div class="buttons" id="up">
+                    <div class="button-container">
+                        <button class="button" onpointerdown="buttonHold('{{ lift.id }}', 0)" onpointerleave="buttonHoldEnd('{{ lift.id }}', 0)" onpointerup="buttonHoldEnd('{{ lift.id }}', 0)">Up</button>
+                    </div>
+                    <div class="indicator"></div>
+                </div>
+                <div class="buttons" id="down">
+                    <div class="button-container">
+                        <button class="button" onpointerdown="buttonHold('{{ lift.id }}', 1)" onpointerleave="buttonHoldEnd('{{ lift.id }}', 1)" onpointerup="buttonHoldEnd('{{ lift.id }}', 1)">Down</button>
+                    </div>
+                    <div class="indicator"></div>
+                </div>
+                <div class="buttons" id="lock">
+                    <div class="button-container">
+                        <button class="button" onpointerdown="buttonHold('{{ lift.id }}', 2)" onpointerleave="buttonHoldEnd('{{ lift.id }}', 2)" onpointerup="buttonHoldEnd('{{ lift.id }}', 2)">Lock</button>
+                    </div>
+                    <div class="indicator"></div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <script>
+        var counter;
+        var count = 0;
+        var client_id = Date.now()
+        var prev_lift;
+        var prev_event;
+        let lastMessageTime = 0;
+        let messageTimer;
+        var ws = new WebSocket(`ws://localhost:8000/ws/${client_id}`);
+
+        function buttonHold(lift_id, index) {
+            counter = setInterval(function() {
+                sendMessage(event, lift_id, index);
+                count++;
+            }, 200);
+        }
+
+        function buttonHoldEnd(lift_id, index) {
+            clearInterval(counter);
+        }
+
+        ws.onmessage = function(event) {
+            var eventdata = event.data.split(",");
+            if (eventdata[0] === "incoming") {
+                lastMessageTime = Date.now();
+                if (messageTimer) {
+                    clearTimeout(messageTimer);
+                }
+
+                if (parseInt(eventdata[2]) === prev_lift) {
+                    if (parseInt(eventdata[3]) === prev_event) {
+                        activateIndicator(parseInt(eventdata[2]), parseInt(eventdata[3]));
+                        prev_event = parseInt(eventdata[3]);
+                    } else {
+                        console.log("got new event");
+                        deactivateIndicator(parseInt(eventdata[2]), prev_event);
+                        activateIndicator(parseInt(eventdata[2]), parseInt(eventdata[3]));
+                        prev_event = parseInt(eventdata[3]);
+                    }
+                    prev_lift = parseInt(eventdata[2]);
+                } else {
+                    console.log("got new lift");
+                    if (prev_lift && prev_event) {
+                        deactivateIndicator(prev_lift, prev_event);
+                    }
+                    if (parseInt(eventdata[3]) === prev_event) {
+                        activateIndicator(parseInt(eventdata[2]), parseInt(eventdata[3]));
+                        prev_event = parseInt(eventdata[3]);
+                    } else {
+                        console.log("got new event");
+                        deactivateIndicator(parseInt(eventdata[2]), prev_event);
+                        activateIndicator(parseInt(eventdata[2]), parseInt(eventdata[3]));
+                        prev_event = parseInt(eventdata[3]);
+                    }
+                    prev_lift = parseInt(eventdata[2]);
+                }
+
+                messageTimer = setTimeout(function() {
+                    // Rufe hier die andere Funktion auf, die nach 1 Sekunde ausgeführt werden soll
+                    deactivateIndicator(parseInt(eventdata[2]), parseInt(eventdata[3]));
+                }, 1000);
+            }
+        };
+
+        function sendMessage(event, lift_id, direction) {
+            ws.send(lift_id + "," + direction)
+        }
+
+        function activateIndicator(lift_id, index) {
+            const indicators = document.querySelectorAll(`.lift:nth-child(${parseInt(lift_id) + 1}) .indicator`);
+            indicators.forEach((indicator, i) => {
+                if (i === index) {
+                    indicator.classList.add('active');
+                } else {
+                    indicator.classList.remove('active');
+                }
+            })
+        }
+
+        function deactivateIndicator(lift_id, index) {
+            const indicators = document.querySelectorAll(`.lift:nth-child(${parseInt(lift_id) + 1}) .indicator`);
+            indicators.forEach((indicator, i) => {
+                if (i === index) {
+                    indicator.classList.remove('active');
+                }
+            })
+        }
+
+    </script>
+</body>
+</html>

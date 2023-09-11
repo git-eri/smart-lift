@@ -1,28 +1,62 @@
-"""FastAPI main module."""
-from typing import Union
-
-from fastapi import FastAPI
+"""Main FastAPI application and routing logic."""
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
 
+class ConnectionManager:
+    """Manages active WebSocket connections."""
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        """Adds a new connection to the list of active connections."""
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        """Removes a connection from the list of active connections."""
+        self.active_connections.remove(websocket)
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        """Sends a message to a specific connection."""
+        await websocket.send_text(message)
+
+    async def broadcast(self, message: str):
+        """Broadcasts a message to all active connections."""
+        for connection in self.active_connections:
+            await connection.send_text(message)
+
+manager = ConnectionManager()
+
+templates = Jinja2Templates(directory="app/templates")
+
+lifts_data = [
+    {"id": "0", "name": "Lift 1"},
+    {"id": "1", "name": "Lift 2"},
+    {"id": "2", "name": "Lift 3"},
+    {"id": "3", "name": "Lift 4"},
+    {"id": "4", "name": "Lift 5"}
+]
+
+# broadcast lift status to all clients
 
 @app.get("/")
-def read_root():
-    """Should return the main page of the API."""
-    return {"Hello": "World"}
+async def read_root(request: Request):
+    """Serve the client-side application."""
+    return templates.TemplateResponse("dashboard.html", {"request": request, "lifts": lifts_data})
 
-
-@app.get("/liftup/{lift_id}")
-def lift_up(lift_id: int, query: Union[str, None] = None):
-    """Move corrosponding lift down"""
-    return {"lift_id": lift_id, "q": query, "status": "OK"}
-
-@app.get("/liftdown/{lift_id}")
-def lift_down(lift_id: int, query: Union[str, None] = None):
-    """Move corrosponding lift down"""
-    return {"lift_id": lift_id, "q": query, "status": "OK"}
-
-@app.get("/liftlock/{lift_id}")
-def lift_lock(lift_id: int, query: Union[str, None] = None):
-    """Lock corrosponding lift"""
-    return {"lift_id": lift_id, "q": query, "status": "OK"}
+@app.websocket("/ws/{client_id}")
+async def websocket_endpoint(websocket: WebSocket, client_id: int):
+    """Communicates with the client-side application."""
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            print(f"{client_id},{data}")
+            await manager.send_personal_message(f"outgoing,{client_id},{data}", websocket)
+            await manager.broadcast(f"incoming,{client_id},{data}")
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+        print(f"msg,'Client #{client_id} left'")
+        await manager.broadcast(f"msg,'Client #{client_id} left'")
