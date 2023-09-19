@@ -1,5 +1,7 @@
 """Main FastAPI application and routing logic."""
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+import ast
+import asyncio
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
@@ -29,25 +31,16 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+async def send_lift_status(websocket):
+    while True:
+        await websocket.send_text("This is a periodic message.")
+        print("Sent lift status")
+        await asyncio.sleep(10)
+
 templates = Jinja2Templates(directory="app/templates")
 
-controllers = [
-    {"id": "0", "name": "Controller 1", "ip": "192.168.178.23"},
-    {"id": "1", "name": "Controller 2", "ip": "192.168.178.24"},
-]
-
-lifts = [
-    {"id": "0", "name": "Lift 1"},
-    {"id": "1", "name": "Lift 2"},
-    {"id": "2", "name": "Lift 3"},
-    {"id": "3", "name": "Lift 4"},
-    {"id": "4", "name": "Lift 5"}
-]
-
-websocket_conn = None
-controllersocket_conn = None
-
-# broadcast lift status to all clients
+lifts = []
+active_lifts = []
 
 @app.get("/")
 async def read_root(request: Request):
@@ -55,47 +48,60 @@ async def read_root(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request, "lifts": lifts})
 
 @app.websocket("/ws/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, client_id: str):
+async def websocket_endpoint(websocket: WebSocket, client_id: str, background_tasks: BackgroundTasks):
     """Communicates with the client-side application."""
     await manager.connect(websocket)
-    global websocket_conn
-    websocket_conn = websocket
+    if not client_id.startswith("c"):
+        print(f"Client {client_id} connected")
+        background_tasks.add_task(send_lift_status, websocket)
     try:
         while True:
             data = await websocket.receive_text()
-            split_data = data.split(",")
-            if split_data[0] == "hello":
-                print(f"[WS] 'Client #{client_id} joined'")
-                await manager.broadcast(f"msg,'Client #{client_id} joined'")
-            elif split_data[0] == "lift":
-                print(f"[WS] {client_id},{data}")
-                await manager.broadcast(f"incoming,{client_id},{data}")
-                if controllersocket_conn:
-                    await controllersocket_conn.send_text(f"incoming,{client_id},{data}")
-                # await manager.send_personal_message(f"outgoing,{client_id},{data}", websocket)
+            split_data = data.split(";")
+
+            if client_id.startswith("c"):
+                # Handle Controller messages
+                if split_data[0] == "hello":
+                    # Handle Controller joining
+                    print(f"Controller {client_id} connected")
+                    msg_lifts = ast.literal_eval(split_data[3])
+                    for lift in msg_lifts:
+                        if lift not in lifts:
+                            lifts.append(lift)
+                    await manager.broadcast(f"msg;controller {client_id} joined")
+                elif split_data[0] == "active_lifts":
+                    # Handle Controller sending active lifts
+                    msg_active = ast.literal_eval(split_data[1])
+                    for lift in msg_active:
+                        if lift not in active_lifts:
+                            active_lifts.append(lift)
+                    await manager.broadcast(f"clients;active_lifts;{active_lifts}")
+                    # await manager.send_personal_message(f"outgoing;{client_id};{data}",websocket)
+            else:
+                # Handle client messages
+                if split_data[0] == "lift":
+                    # Handle Lift moving
+                    await manager.broadcast(f"incoming;{client_id};{data}")
+                elif split_data[0] == "stop":
+                    # Handle Emergency Stop
+                    print("EMERGENCY STOP")
+                    await manager.broadcast(f"incoming;{client_id};{data}")
+                else:
+                    print(f"Something Else: {client_id},{data}")
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-        print(f"[WS] msg,'Client #{client_id} left'")
-        await manager.broadcast(f"msg,'Client #{client_id} left'")
-
-@app.websocket("/cs/{controller_id}")
-async def websocket_controller(controllersocket: WebSocket, controller_id: int):
-    """Communicates with the controller-side application."""
-    await manager.connect(controllersocket)
-    global controllersocket_conn
-    controllersocket_conn = controllersocket
-    try:
-        while True:
-            data = await controllersocket.receive_text()
-            split_data = data.split(",")
-            if split_data[0] == "hello":
-                controllers.append({"id": controller_id, "name": split_data[1], "ip": split_data[2]})
-                print("[CS]", controller_id, "connected")
-            else:
-                print(f"[CS] {data}")
-            #await manager.send_personal_message(f"outgoing,{controller_id},{data}", controllersocket)
-            #await manager.broadcast(f"incoming,{controller_id},{data}")
-    except WebSocketDisconnect:
-        manager.disconnect(controllersocket)
-        print(f"[CS] msg,'Controller #{controller_id} left'")
-        await manager.broadcast(f"msg,'Client #{controller_id} left'")
+        if client_id.startswith("c"):
+            # Handle controller disconnecting
+            for lift in lifts:
+                print(lift)
+                if lift["controller"] == client_id:
+                    lifts.remove(lift)
+            for lift in active_lifts:
+                if lift["controller"] == client_id:
+                    active_lifts.remove(lift)
+            # TODO: Somehow not all lifts are removed from the list
+            await manager.broadcast(f"msg;Controller {client_id} left")
+        else:
+            # Handle client disconnecting
+            print(f"Client {client_id} left")
+            await manager.broadcast(f"msg;Client {client_id} left")

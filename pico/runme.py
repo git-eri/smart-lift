@@ -7,40 +7,67 @@ import utime
 
 pico_id = tools.read_id()
 
-async def connect_ws(ip, server):
-    ws = await connect("ws://" + server + ":8000/cs/0000" + str(pico_id))
-    if not ws:
-        print("Connection to server failed")
-        return
-    
-    await ws.send("hello,Pico_" + str(pico_id) + "," + ip)
+lifts = [
+    {"id": "0", "name": "Lift 1", "controller": "c00001"},
+    {"id": "1", "name": "Lift 2", "controller": "c00001"},
+    {"id": "2", "name": "Lift 3", "controller": "c00001"},
+    {"id": "3", "name": "Lift 4", "controller": "c00001"},
+    {"id": "4", "name": "Lift 5", "controller": "c00001"}
+]
 
+
+async def connect_ws(ip, server):
+    last_msg_time = None
     led_on = False
     led_off_task = None
+    connection = None
+
+    try:
+        ws = await connect("ws://" + server + ":8000/ws/c0000" + str(pico_id))
+        connection = True
+    except:
+        print("Connection to server failed")
+        return
+
+    await ws.send("hello;Pico_" + str(pico_id) + ";" + ip + ";" + str(lifts))
 
     def turn_off_led():
         nonlocal led_on
         pico_led.off()  # LED ausschalten
         led_on = False
-        #print("LED off")
+        #print("LED Turned OFF!!!")
+    
+    async def handle_active_lifts():
+        while connection:
+            await ws.send('active_lifts;{"id": "0", "name": "Lift 1", "controller": "c00001"},{"id": "1", "name": "Lift 2", "controller": "c00001"}')
+            #print("Sent Lift status")
+            await uasyncio.sleep(5)
+    uasyncio.create_task(handle_active_lifts())
 
     async def handle_message(msg):
         nonlocal led_on, led_off_task
-        data = msg.split(",")
-        if len(data) < 5:
-            print("Unhandled Event 1:", msg)
+        data = msg.split(";")
+
+        if data[0] == "msg":
+            print("Message:", msg)
+        elif len(data) < 5:
+            print("msg too short!:", msg)
+        elif data[0] == "clients":
+            pass
         elif data[2] == "lift":
             #print("Lift", data[3], "Aktion", data[4])
+
             if not led_on:
                 pico_led.on()  # LED einschalten
                 led_on = True
+                
             if led_off_task:
                 led_off_task.cancel()  # Task zum Ausschalten der LED abbrechen
             led_off_task = uasyncio.create_task(turn_off_led_after_delay())
         elif data[2] == "stop":
             print("EMERGENCY STOP")
         else:
-            print("Unhandled Event 2:", msg)
+            print("Unhandled Event:", msg)
 
     async def turn_off_led_after_delay():
         await uasyncio.sleep(0.5)  # Warte 500 ms
@@ -58,6 +85,8 @@ async def connect_ws(ip, server):
         turn_off_led()  # LED ausschalten
 
     await ws.wait_closed()
+    connection = False
+    print("Connection was closed from server")
 
 try:
     # Bootup
@@ -66,11 +95,15 @@ try:
     print("Connecting to server", server)
     loop = uasyncio.get_event_loop()
     loop.run_until_complete(connect_ws(ip, server))
+    loop.run_forever()
 
 except KeyboardInterrupt:
-    machine.reset()
-except:
-    tools.blink(20,0.1)
-    machine.reset()
+    print("Keyboard Interrupt!")
+    #machine.reset()
+
+except OSError as err:
+    print("OSError:", err)
+    #tools.blink(20,0.1)
+    #machine.reset()
 
 #loop.run_forever()

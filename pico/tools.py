@@ -19,15 +19,15 @@ def read_id():
 
 def connect():
     # Connect to WLAN and return own IP
-    ip = None
+    server = None
     pico_id = read_id()
     wlan = network.WLAN(network.STA_IF)
     wlan.config(hostname=f"pico{pico_id}")
     wlan.config(pm = 0xa11140) # type: ignore # disable power saving
     wlan.active(True)
-
     # Search for known networks
-    while wlan.isconnected() == False:
+    while wlan.isconnected() == False or server == None:
+        ip = None
         ssid = None
         server = None
         tries = 0
@@ -46,7 +46,7 @@ def connect():
                         break
             if not ssid:
                 print("No known network found...")
-                blink(10,0.1)
+                #blink(10,0.1)
                 #machine.reset()
         while wlan.isconnected() == False:
             print('Waiting for connection...')
@@ -55,7 +55,7 @@ def connect():
             if tries >= 10:
                 print("Retry Wifi connect")
                 break
-                    
+    
     ip = wlan.ifconfig()
     print('IPv4-Address:', ip[0], '/', ip[1])
     print('Standard-Gateway:', ip[2])

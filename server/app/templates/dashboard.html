@@ -102,7 +102,7 @@
     <div class="menubar">
         <h2>Lift Control Admin Panel</h2>
         <!--estop sollte alles blocken und muss erst entsperrt werden-->
-        <button class="e-stop" onpointerdown="emergencyStop()">STOP</button>
+        <button class="e-stop" onclick="emergencyStop()">STOP</button>
     </div>
     <div class="lifts">
         {% for lift in lifts %}
@@ -155,7 +155,7 @@
         }
 
         ws.onmessage = function(event) {
-            var eventdata = event.data.split(",");
+            var eventdata = event.data.split(";");
             if (eventdata[0] === "incoming" && eventdata[2] === "lift") {
                 lastMessageTime = Date.now();
                 if (messageTimer) {
@@ -187,11 +187,11 @@
                 // Handle andere Arten von WebSocket-Nachrichten hier
                 console.log("unhandled data:", event)
             }
-        };
+        } ;
 
 
         function sendMessage(event, lift_id, direction) {
-            ws.send(event + "," + lift_id + "," + direction)
+            ws.send(event + ";" + lift_id + ";" + direction)
         }
 
         function activateIndicator(lift_id, index) {
@@ -215,7 +215,7 @@
         }
 
         function emergencyStop() {
-            sendMessage('stop', 0, 0);
+            ws.send("stop,0,0")
         }
 
 
