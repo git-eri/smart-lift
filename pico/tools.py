@@ -19,34 +19,43 @@ def read_id():
 
 def connect():
     # Connect to WLAN and return own IP
+    ip = None
     pico_id = read_id()
     wlan = network.WLAN(network.STA_IF)
     wlan.config(hostname=f"pico{pico_id}")
     wlan.config(pm = 0xa11140) # type: ignore # disable power saving
     wlan.active(True)
-    ssid = None
-    server = None
+
     # Search for known networks
-    while not ssid:
-        print("Search for networks")
-        networks = wlan.scan()
-        known_net = read_auth()    
-        for net in known_net:
-            for w in networks:
-                if known_net[net]["ssid"] == w[0].decode():
-                    ssid = known_net[net]["ssid"]
-                    password = known_net[net]["password"]
-                    server = known_net[net]["server"]
-                    print(f"Connecting to {ssid}...")
-                    wlan.connect(ssid, password)
-                    break
-        if not ssid:
-            print("No known network found...")
-            blink(10,0.1)
-            #machine.reset()
     while wlan.isconnected() == False:
-        print('Waiting for connection...')
-        sleep(1)
+        ssid = None
+        server = None
+        tries = 0
+        while not ssid:
+            print("Search for networks")
+            networks = wlan.scan()
+            known_net = read_auth()    
+            for net in known_net:
+                for w in networks:
+                    if known_net[net]["ssid"] == w[0].decode():
+                        ssid = known_net[net]["ssid"]
+                        password = known_net[net]["password"]
+                        server = known_net[net]["server"]
+                        print(f"Connecting to {ssid}...")
+                        wlan.connect(ssid, password)
+                        break
+            if not ssid:
+                print("No known network found...")
+                blink(10,0.1)
+                #machine.reset()
+        while wlan.isconnected() == False:
+            print('Waiting for connection...')
+            sleep(1)
+            tries = tries + 1
+            if tries >= 10:
+                print("Retry Wifi connect")
+                break
+                    
     ip = wlan.ifconfig()
     print('IPv4-Address:', ip[0], '/', ip[1])
     print('Standard-Gateway:', ip[2])

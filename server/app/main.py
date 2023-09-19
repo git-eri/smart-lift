@@ -44,6 +44,9 @@ lifts = [
     {"id": "4", "name": "Lift 5"}
 ]
 
+websocket_conn = None
+controllersocket_conn = None
+
 # broadcast lift status to all clients
 
 @app.get("/")
@@ -52,32 +55,47 @@ async def read_root(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request, "lifts": lifts})
 
 @app.websocket("/ws/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, client_id: int):
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """Communicates with the client-side application."""
     await manager.connect(websocket)
+    global websocket_conn
+    websocket_conn = websocket
     try:
         while True:
             data = await websocket.receive_text()
-            print(f"{client_id},{data}")
-            # await manager.send_personal_message(f"outgoing,{client_id},{data}", websocket)
-            await manager.broadcast(f"incoming,{client_id},{data}")
+            split_data = data.split(",")
+            if split_data[0] == "hello":
+                print(f"[WS] 'Client #{client_id} joined'")
+                await manager.broadcast(f"msg,'Client #{client_id} joined'")
+            elif split_data[0] == "lift":
+                print(f"[WS] {client_id},{data}")
+                await manager.broadcast(f"incoming,{client_id},{data}")
+                if controllersocket_conn:
+                    await controllersocket_conn.send_text(f"incoming,{client_id},{data}")
+                # await manager.send_personal_message(f"outgoing,{client_id},{data}", websocket)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-        print(f"msg,'Client #{client_id} left'")
+        print(f"[WS] msg,'Client #{client_id} left'")
         await manager.broadcast(f"msg,'Client #{client_id} left'")
 
-
 @app.websocket("/cs/{controller_id}")
-async def websocket_controller(websocket: WebSocket, controller_id: int):
+async def websocket_controller(controllersocket: WebSocket, controller_id: int):
     """Communicates with the controller-side application."""
-    await manager.connect(websocket)
+    await manager.connect(controllersocket)
+    global controllersocket_conn
+    controllersocket_conn = controllersocket
     try:
         while True:
-            data = await websocket.receive_text()
-            print(f"{controller_id},{data}")
-            await manager.send_personal_message(f"outgoing,{controller_id},{data}", websocket)
-            await manager.broadcast(f"incoming,{controller_id},{data}")
+            data = await controllersocket.receive_text()
+            split_data = data.split(",")
+            if split_data[0] == "hello":
+                controllers.append({"id": controller_id, "name": split_data[1], "ip": split_data[2]})
+                print("[CS]", controller_id, "connected")
+            else:
+                print(f"[CS] {data}")
+            #await manager.send_personal_message(f"outgoing,{controller_id},{data}", controllersocket)
+            #await manager.broadcast(f"incoming,{controller_id},{data}")
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
-        print(f"msg,'Controller #{controller_id} left'")
+        manager.disconnect(controllersocket)
+        print(f"[CS] msg,'Controller #{controller_id} left'")
         await manager.broadcast(f"msg,'Client #{controller_id} left'")

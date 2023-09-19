@@ -5,11 +5,15 @@ from websockets.client import connect
 from picozero import pico_led
 import utime
 
+pico_id = tools.read_id()
+
 async def connect_ws(ip, server):
-    ws = await connect("ws://" + server + ":8000/ws/1234")
+    ws = await connect("ws://" + server + ":8000/cs/0000" + str(pico_id))
     if not ws:
-        print("Verbindung fehlgeschlagen")
+        print("Connection to server failed")
         return
+    
+    await ws.send("hello,Pico_" + str(pico_id) + "," + ip)
 
     led_on = False
     led_off_task = None
