@@ -1,7 +1,6 @@
 """Main FastAPI application and routing logic."""
 import ast
-import asyncio
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
@@ -11,36 +10,38 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, client_id: int, websocket: WebSocket):
         """Adds a new connection to the list of active connections."""
         await websocket.accept()
-        self.active_connections.append(websocket)
+        self.active_connections.append((client_id, websocket))
 
-    def disconnect(self, websocket: WebSocket):
+    def disconnect(self, client_id: int, websocket: WebSocket):
         """Removes a connection from the list of active connections."""
-        self.active_connections.remove(websocket)
+        self.active_connections.remove((client_id, websocket))
 
-    async def send_personal_message(self, message: str, websocket: WebSocket):
+    async def send_personal_message(self, client_id: int, message: str):
         """Sends a message to a specific connection."""
-        await websocket.send_text(message)
+        for connection_id, connection in self.active_connections:
+            if connection_id == client_id:
+                await connection.send_text(message)
 
     async def broadcast(self, message: str):
         """Broadcasts a message to all active connections."""
-        for connection in self.active_connections:
+        for _, connection in self.active_connections:
             await connection.send_text(message)
 
-manager = ConnectionManager()
+    async def broadcast_clients(self, message: str):
+        """Broadcasts a message to all active clients."""
+        for connection_id, connection in self.active_connections:
+            if connection_id.startswith("cli"):
+                await connection.send_text(message)
 
-async def send_lift_status(websocket):
-    while True:
-        await websocket.send_text("This is a periodic message.")
-        print("Sent lift status")
-        await asyncio.sleep(10)
+cm = ConnectionManager()
 
 templates = Jinja2Templates(directory="app/templates")
-
 lifts = []
-active_lifts = []
+controllers = []
+clients = []
 
 @app.get("/")
 async def read_root(request: Request):
@@ -48,60 +49,83 @@ async def read_root(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request, "lifts": lifts})
 
 @app.websocket("/ws/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, client_id: str, background_tasks: BackgroundTasks):
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """Communicates with the client-side application."""
-    await manager.connect(websocket)
-    if not client_id.startswith("c"):
-        print(f"Client {client_id} connected")
-        background_tasks.add_task(send_lift_status, websocket)
+    await cm.connect(client_id, websocket)
     try:
-        while True:
-            data = await websocket.receive_text()
-            split_data = data.split(";")
-
-            if client_id.startswith("c"):
-                # Handle Controller messages
-                if split_data[0] == "hello":
-                    # Handle Controller joining
-                    print(f"Controller {client_id} connected")
-                    msg_lifts = ast.literal_eval(split_data[3])
+        if client_id.startswith("con"):
+            # Handle Controller event
+            print(f"Controller {client_id} connected")
+            while True:
+                data = await websocket.receive_text()
+                data = data.split(";")
+                print("Controller sent:", data)
+                if data[0] == "hello":
+                    # Controller joining
+                    msg_lifts = ast.literal_eval(data[1])
                     for lift in msg_lifts:
                         if lift not in lifts:
                             lifts.append(lift)
-                    await manager.broadcast(f"msg;controller {client_id} joined")
-                elif split_data[0] == "active_lifts":
-                    # Handle Controller sending active lifts
-                    msg_active = ast.literal_eval(split_data[1])
-                    for lift in msg_active:
-                        if lift not in active_lifts:
-                            active_lifts.append(lift)
-                    await manager.broadcast(f"clients;active_lifts;{active_lifts}")
-                    # await manager.send_personal_message(f"outgoing;{client_id};{data}",websocket)
-            else:
-                # Handle client messages
-                if split_data[0] == "lift":
-                    # Handle Lift moving
-                    await manager.broadcast(f"incoming;{client_id};{data}")
-                elif split_data[0] == "stop":
-                    # Handle Emergency Stop
-                    print("EMERGENCY STOP")
-                    await manager.broadcast(f"incoming;{client_id};{data}")
+                    print("Current Lifts:", lifts)
+                elif data[0] == "moved_lift":
+                    # Lift moved
+                    if data[4] == "0":
+                        await cm.broadcast_clients(f"moved_lift;{data[1]};{data[2]};{data[3]}")
+                    else:
+                        await cm.broadcast(f"error;Controller {client_id} sent invalid data: {data}")
+                elif data[0] == "stop":
+                    # Emergency stop
+                    pass
+                elif data[0] == "error":
+                    # Error
+                    pass
                 else:
-                    print(f"Something Else: {client_id},{data}")
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-        if client_id.startswith("c"):
-            # Handle controller disconnecting
-            for lift in lifts:
-                print(lift)
-                if lift["controller"] == client_id:
-                    lifts.remove(lift)
-            for lift in active_lifts:
-                if lift["controller"] == client_id:
-                    active_lifts.remove(lift)
-            # TODO: Somehow not all lifts are removed from the list
-            await manager.broadcast(f"msg;Controller {client_id} left")
+                    print(f"Controller sent something unhandled: {client_id},{data}")
+        elif client_id.startswith("cli"):
+            # Handle Client event
+            print(f"Client {client_id} connected")
+            while True:
+                data = await websocket.receive_text()
+                data = data.split(";")
+                print("Client sent:", data)
+                if data[0] == "hello":
+                    # Client joining
+                    pass
+                elif data[0] == "lift":
+                    # Lift moved
+                    con_id = data[1]
+                    lift_id = data[2]
+                    action = data[3]
+                    on_off = data[4]
+                    if on_off == "on":
+                        await cm.send_personal_message(con_id, f"lift;{lift_id};{action};on")
+                    elif on_off == "off":
+                        await cm.send_personal_message(con_id, f"lift;{lift_id};{action};off")
+                    else:
+                        print(f"Client sent something unhandled: {client_id},{data}")
+                elif data[0] == "stop":
+                    # Emergency stop
+                    await cm.broadcast(f"stop")
+                else:
+                    print(f"Client sent something unhandled: {client_id},{data}")
         else:
+            # Handle other event
+            print(f"Something else connected: {client_id}")
+            while True:
+                data = await websocket.receive_text()
+                print(f"Something else sent something: {client_id},{data}")
+    except WebSocketDisconnect:
+        cm.disconnect(client_id, websocket)
+        if client_id.startswith("con"):
+            # Handle controller disconnecting
+            # for lift in lifts:
+            #     if lift["controller"] == client_id:
+            #         lifts.remove(lift)
+            print(f"Controller {client_id} left")
+            await cm.broadcast(f"msg;Controller {client_id} left")
+        elif client_id.startswith("cli"):
             # Handle client disconnecting
             print(f"Client {client_id} left")
-            await manager.broadcast(f"msg;Client {client_id} left")
+            await cm.broadcast(f"msg;Client {client_id} left")
+        else:
+            print(f"Something else left: {client_id}")
