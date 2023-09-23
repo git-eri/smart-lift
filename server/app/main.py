@@ -66,7 +66,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     for lift in msg_lifts:
                         if lift not in lifts:
                             lifts.append(lift)
-                    print("Current Lifts:", lifts)
+                    # print("Current Lifts:", lifts)
                 elif data[0] == "moved_lift":
                     # Lift moved
                     if data[4] == "0":
