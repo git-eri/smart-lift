@@ -45,6 +45,33 @@ $ cd smart-lift
 $ ???
 ```
 
+## Controller (ESP8266)
+
+### settings.h
+```c
+// Controller ID: must be unique
+const String con_id = "con00001";
+// Lifts start from 0, if Controller handles Lift 6-10 it must be 5
+const uint8_t lift_begin = 5;
+// Lift count: How many lifts the controller handles
+const uint8_t lift_count = 5;
+// which Relais for which lift
+const uint8_t lifts[lift_count][3] = { {0,1,2},
+                                       {3,4,5},
+                                       {6,7,8},
+                                       {9,10,11},
+                                       {12,13,14}
+                                      };
+
+// Wifi stuff
+const char* ssid = ""; //Enter SSID
+const char* password = ""; //Enter Password
+const char* websockets_server_host = ""; //Enter server adress
+const uint16_t websockets_server_port = 8000; // Enter server port
+```
+
+
+
 ## Controller (Pico)
 
 The controller is connected via wifi and should have its own ip address. The server communicates to the controller via http requests. The controller talks back to the server to give information which lifts are active and if the system is healthy.
@@ -60,7 +87,6 @@ This file holds informations about possible wifi networks to connect with and th
     "server": "ip address of server"
 }
 ```
-
 
 
 ## What needs to get tested?

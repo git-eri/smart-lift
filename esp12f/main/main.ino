@@ -1,4 +1,4 @@
-#include "functions.cpp"
+#include "settings.h"
 #include <ArduinoWebsockets.h>
 #include <ESP8266WiFi.h>
 
@@ -9,28 +9,7 @@ const uint8_t serPin = 14;    // GPIO14 	74x595 SER/DS
 const uint8_t oePin = 5;      // GPIO05 	74x595 OE/output enable active low
 //int actual = -1;
 
-// Controller ID: must be unique
-const String con_id = "con00001";
-// Lifts start from 0, if Controller handles Lift 6-10 it must be 5
-const uint8_t lift_begin = 5;
-// Lift count: How many lifts the controller handles
-const uint8_t lift_count = 5;
-// which Relais for which lift
-const uint8_t lifts[lift_count][3] = { {0,1,2},
-                                       {3,4,5},
-                                       {6,7,8},
-                                       {9,10,11},
-                                       {12,13,14}
-                                      };
-
-// Wifi stuff
-const char* ssid = "FRITZ!Box 7590 AX"; //Enter SSID
-const char* password = ""; //Enter Password
-const char* websockets_server_host = "192.168.178.63"; //Enter server adress
-const uint16_t websockets_server_port = 8000; // Enter server port
-
 using namespace websockets;
-
 WebsocketsClient client;
 
 void(* resetFunc) (void) = 0;
@@ -65,7 +44,6 @@ String getValue(String data, char separator, int index){
 }
 
 void setup() {
-  // put your setup code here, to run once:
   Serial.begin(115200);
   Serial.println("I am active!");
   pinMode(buttonPin, INPUT);
@@ -75,7 +53,7 @@ void setup() {
   pinMode(oePin, OUTPUT);
   digitalWrite(oePin, LOW); // enable the output
 
-  // Disable all Relais on start
+  // Disable all relais on start
   for (uint8_t i = 0; i < 16; i++) {
     hc595Write(i, LOW);
   }
@@ -91,6 +69,7 @@ void setup() {
   }
   about_me.concat("]");  
 
+  // Connect to wifi
   WiFi.begin(ssid, password);
   // Wait some time to connect to wifi
   for(uint8_t i = 0; i < 10 && WiFi.status() != WL_CONNECTED; i++) {
@@ -103,18 +82,19 @@ void setup() {
       return;
   }
   Serial.println("Connected to Wifi, Connecting to server...");
-  // try to connect to Websockets server
+  // Try to connect to Websockets server
   bool connected = client.connect(websockets_server_host, websockets_server_port, "/ws/" + con_id);
   if(connected) {
-      Serial.println("Connecetd!");
+      Serial.println("Connecetd to Server!");
   } else {
       Serial.println("Not Connected!");
   }
-  // run callback when messages are received
+  // Run callback when messages are received
   client.onMessage([&](WebsocketsMessage message) {
+    Serial.println(message.data());
     String msg_type = getValue(message.data(), ';', 0);
     if (msg_type == "lift") {
-      // handle lift actions
+      // Handle lift actions
       String lift_id = getValue(message.data(), ';', 1);
       String action = getValue(message.data(), ';', 2);
       String on_off = getValue(message.data(), ';', 3);
@@ -138,14 +118,14 @@ void setup() {
         hc595Write(i, LOW);
       }
       Serial.println("EMERGENCY STOP");
-      client.send("stop");
+      client.send("stop;ok");
     }
     else if (msg_type == "msg") {
-      //handle messages from server
+      // Handle messages from server
       return;
     }
     else {
-      //handle other bullshit that happens
+      // Handle other bullshit that happens
       Serial.println("Unhandled Event: " + message.data());
       client.send("error;Unhandled Event;" + message.data());
     }
@@ -162,7 +142,7 @@ void loop() {
     for (uint8_t i = 0; i < 16; i++) {
       hc595Write(i, LOW);
     }
-    Serial.println("Server not available!");
+    Serial.println("Server not available! Retrying now...");
     delay(500);
     resetFunc();
   }

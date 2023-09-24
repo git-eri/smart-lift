@@ -105,7 +105,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                         print(f"Client sent something unhandled: {client_id},{data}")
                 elif data[0] == "stop":
                     # Emergency stop
-                    await cm.broadcast(f"stop")
+                    await cm.broadcast("stop")
                 else:
                     print(f"Client sent something unhandled: {client_id},{data}")
         else:
@@ -125,6 +125,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             await cm.broadcast(f"msg;Controller {client_id} left")
         elif client_id.startswith("cli"):
             # Handle client disconnecting
+            # TODO: Client disconnecting while lift is moving
             print(f"Client {client_id} left")
             await cm.broadcast(f"msg;Client {client_id} left")
         else:
