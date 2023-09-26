@@ -7,8 +7,10 @@ from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
 
+
 class ConnectionManager:
     """Manages active WebSocket connections."""
+
     def __init__(self):
         self.active_connections: list[WebSocket] = []
 
@@ -38,6 +40,7 @@ class ConnectionManager:
             if connection_id.startswith("cli"):
                 await connection.send_text(message)
 
+
 cm = ConnectionManager()
 
 templates = Jinja2Templates(directory="app/templates")
@@ -51,17 +54,22 @@ async def send_message_to_clients():
     while True:
         await cm.broadcast_clients("lift_status;" + str(json.dumps(lifts)))
         await asyncio.sleep(2)
-#asyncio.create_task(send_message_to_clients())
+
+
+# asyncio.create_task(send_message_to_clients())
+
 
 @app.get("/")
 async def read_root(request: Request):
     """Serve the client-side application."""
     return templates.TemplateResponse("index.html", {"request": request})
 
+
 @app.get("/admin")
 async def read_admin(request: Request):
     """Serve the client-side application."""
     return templates.TemplateResponse("dashboard.html", {"request": request})
+
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
@@ -90,9 +98,13 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 elif data[0] == "moved_lift":
                     # Lift moved
                     if data[4] == "0":
-                        await cm.broadcast_clients(f"moved_lift;{data[1]};{data[2]};{data[3]}")
+                        await cm.broadcast_clients(
+                            f"moved_lift;{data[1]};{data[2]};{data[3]}"
+                        )
                     else:
-                        await cm.broadcast(f"error;Controller {client_id} sent invalid data: {data}")
+                        await cm.broadcast(
+                            f"error;Controller {client_id} sent invalid data: {data}"
+                        )
                 elif data[0] == "stop":
                     # Emergency stop
                     pass
@@ -104,7 +116,9 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         elif client_id.startswith("cli"):
             # Handle Client event
             print(f"Client {client_id} connected")
-            await cm.send_personal_message(client_id, "lift_status;" + str(json.dumps(lifts)))
+            await cm.send_personal_message(
+                client_id, "lift_status;" + str(json.dumps(lifts))
+            )
             while True:
                 data = await websocket.receive_text()
                 data = data.split(";")
@@ -120,9 +134,13 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     on_off = data[4]
                     # TODO: Error when controller not responding back to client
                     if on_off == "on":
-                        await cm.send_personal_message(con_id, f"lift;{lift_id};{action};on")
+                        await cm.send_personal_message(
+                            con_id, f"lift;{lift_id};{action};on"
+                        )
                     elif on_off == "off":
-                        await cm.send_personal_message(con_id, f"lift;{lift_id};{action};off")
+                        await cm.send_personal_message(
+                            con_id, f"lift;{lift_id};{action};off"
+                        )
                     else:
                         print(f"Client sent something unhandled: {client_id},{data}")
                 elif data[0] == "stop":
