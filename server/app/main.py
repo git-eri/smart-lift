@@ -51,12 +51,17 @@ async def send_message_to_clients():
     while True:
         await cm.broadcast_clients("lift_status;" + str(json.dumps(lifts)))
         await asyncio.sleep(2)
-asyncio.create_task(send_message_to_clients())
+#asyncio.create_task(send_message_to_clients())
 
 @app.get("/")
 async def read_root(request: Request):
     """Serve the client-side application."""
-    return templates.TemplateResponse("dashboard.html", {"request": request, "lifts": lifts})
+    return templates.TemplateResponse("index.html", {"request": request})
+
+@app.get("/admin")
+async def read_admin(request: Request):
+    """Serve the client-side application."""
+    return templates.TemplateResponse("dashboard.html", {"request": request})
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
@@ -66,16 +71,21 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         if client_id.startswith("con"):
             # Handle Controller event
             print(f"Controller {client_id} connected")
+            first_touch = await websocket.receive_text()
+            first_touch = first_touch.split(";")
+            if first_touch[0] == "hello":
+                msg_lifts = ast.literal_eval(first_touch[1])
+                for lift in msg_lifts:
+                    if lift not in lifts:
+                        lifts.append(lift)
+            await cm.broadcast_clients("lift_status;" + str(json.dumps(lifts)))
             while True:
                 data = await websocket.receive_text()
                 data = data.split(";")
                 # print("Controller sent:", data)
                 if data[0] == "hello":
                     # Controller joining
-                    msg_lifts = ast.literal_eval(data[1])
-                    for lift in msg_lifts:
-                        if lift not in lifts:
-                            lifts.append(lift)
+                    pass
                     # print("Current Lifts:", lifts)
                 elif data[0] == "moved_lift":
                     # Lift moved
@@ -94,6 +104,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         elif client_id.startswith("cli"):
             # Handle Client event
             print(f"Client {client_id} connected")
+            await cm.send_personal_message(client_id, "lift_status;" + str(json.dumps(lifts)))
             while True:
                 data = await websocket.receive_text()
                 data = data.split(";")
@@ -103,11 +114,11 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     pass
                 elif data[0] == "lift":
                     # Lift moved
-                    # TODO: Error when controller not responding back to client
                     con_id = data[1]
                     lift_id = data[2]
                     action = data[3]
                     on_off = data[4]
+                    # TODO: Error when controller not responding back to client
                     if on_off == "on":
                         await cm.send_personal_message(con_id, f"lift;{lift_id};{action};on")
                     elif on_off == "off":
@@ -132,6 +143,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             for lift in lifts.copy():
                 if lift["controller"] == client_id:
                     lifts.remove(lift)
+            await cm.broadcast_clients("lift_status;" + str(json.dumps(lifts)))
             print(f"Controller {client_id} left")
             await cm.broadcast(f"msg;Controller {client_id} left")
         elif client_id.startswith("cli"):

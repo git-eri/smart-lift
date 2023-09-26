@@ -82,17 +82,19 @@ void setup() {
   }
 
   // Connect to wifi
+  WiFi.hostname(con_id.c_str());
   WiFi.mode(WIFI_STA);
   WiFi.begin(networks[active_net][0], networks[active_net][1]);
   // Wait some time to connect to wifi
   for(uint8_t i = 0; i < 10 && WiFi.status() != WL_CONNECTED; i++) {
       Serial.print(".");
-      delay(1000);
+      delay(500);
   }
   Serial.println("");
   // Check if connected to wifi
   if(WiFi.status() != WL_CONNECTED) {
       Serial.println("No Wifi!");
+      delay(500);
       void(* resetFunc) (void) = 0;
       //return;
   }
@@ -117,10 +119,12 @@ void setup() {
         uint8_t value = lifts[lift_id.toInt() - lift_begin][action.toInt()];
         hc595Write(value, HIGH);
         client.send("moved_lift;" + lift_id +";"+ action +";"+ on_off + ";0");
+        return;
       } else if (on_off == "off") {
         uint8_t value = lifts[lift_id.toInt() - lift_begin][action.toInt()];
         hc595Write(value, LOW);
         client.send("moved_lift;" + lift_id +";"+ action +";"+ on_off + ";0");
+        return;
       }
       else {
         client.send("moved_lift;" + lift_id +";"+ action +";"+ on_off + ";1");
@@ -134,6 +138,7 @@ void setup() {
       }
       Serial.println("EMERGENCY STOP");
       client.send("stop;ok");
+      return;
     }
     else if (msg_type == "msg") {
       // Handle messages from server
@@ -143,6 +148,7 @@ void setup() {
       // Handle other bullshit that happens
       Serial.println("Unhandled Event: " + message.data());
       client.send("error;Unhandled Event;" + message.data());
+      return;
     }
   });
 

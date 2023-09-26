@@ -4,165 +4,205 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-        }
+    * {
+        touch-action: manipulation;
+    }
+    body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+    }
+    .menubar {
+        display: flex;
+        flex-direction: row;
+        padding-left: 10px;
+        padding-right: 10px;
+        justify-content: space-between;
+        align-items: center;
+        background-color: #3498db;
+    }
+    .lifts {
+        display: flex;
+        overflow-x: scroll;
+        scroll-snap-type: x mandatory;
+        flex-wrap: nowrap;
+        height: calc(100vh - 50px);
+        margin-top: 50px;
+    }
+    .lift {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+        scroll-snap-align: start;
+        min-width: 100%;
+    }
+    .buttons {
+        display: flex;
+        flex-direction: row;
+        width: 100%;
+        justify-content: space-evenly;
+    }
+    .indicator {
+        width: 40px;
+        height: 40px;
+        background-color: #ccc;
+        border-radius: 50%;
+        margin: 5px;
+        order: -1;
+        align-self: center;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        -khtml-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+    }
+    .button {
+        display: table-cell;
+        width: 50vw;
+        padding: 20px;
+        background-color: #3498db;
+        color: #fff;
+        border: none;
+        cursor: pointer;
+        margin: 20px;
+        font-size: 3vh;
+        text-align: center;
+        white-space: nowrap;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        -khtml-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+    }
+    .e-stop {
+        width: 40vw;
+        height: 15vw;
+        padding: 10px;
+        background-color: #e74c3c;
+        color: #fff;
+        border: none;
+        cursor: pointer;
+        margin: 5px;
+        font-size: 3vh;
+        text-align: center;
+        white-space: nowrap;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        -khtml-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+    }
+    .indicators {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        margin-bottom: 5px;
+    }
+    .active {
+        background-color: #2ecc71;
+    }
 
-        .menubar {
-            display: flex;
-            flex-direction: row;
-            padding-left: 10px;
-            padding-right: 10px;
-            justify-content: space-between;
-            align-items: center;
-            background-color: #3498db;
-        }
-
-        .lifts {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 20px;
-            justify-items: center;
-            padding: 20px;
-        }
-
-        .lift {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 10px;
-            max-width: 300px;
-        }
-
-        .table {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .buttons {
-            display: flex;
-            flex-direction: row;
-            align-items: center;
-        }
-
-        .button {
-            width: 100px;
-            padding: 10px;
-            background-color: #3498db;
-            color: #fff;
-            border: none;
-            cursor: pointer;
-            margin: 5px;
-            text-align: center;
-            white-space: nowrap;
-            -webkit-touch-callout: none;
-            -webkit-user-select: none;
-            -khtml-user-select: none;
-            -moz-user-select: none;
-            -ms-user-select: none;
-            user-select: none;
-        }
-
-        .e-stop {
-            width: 100px;
-            padding: 10px;
-            background-color: #e74c3c;
-            color: #fff;
-            border: none;
-            cursor: pointer;
-            margin: 5px;
-            text-align: center;
-            white-space: nowrap;
-            -webkit-touch-callout: none;
-            -webkit-user-select: none;
-            -khtml-user-select: none;
-            -moz-user-select: none;
-            -ms-user-select: none;
-            user-select: none;
-        }
-
-        .indicator {
-            width: 20px;
-            height: 20px;
-            background-color: #ccc;
-            border-radius: 50%;
-            margin: 5px;
-        }
-
-        .active {
-            background-color: #2ecc71;
-        }
     </style>
 </head>
 <body>
     <div class="menubar">
-        <h2>Lift Control Admin Panel</h2>
+        <h1>Lift Control</h1>
         <!--estop sollte alles blocken und muss erst entsperrt werden-->
         <button class="e-stop" onclick="emergencyStop()">STOP</button>
     </div>
-    <div class="lifts">
-        {% for lift in lifts %}
-        <div class="lift" id="lift{{ lift.id }}">
-            <h3>{{ lift.name }}</h3>
-            <div class="table">
-                <div class="buttons" id="button{{ lift.id }}-0">
-                    <div class="button-container">
-                        <button class="button" onpointerdown="startLift('{{lift.controller}}','{{lift.id}}', 0)" onpointerleave="endLift('{{lift.controller}}','{{lift.id}}', 0)" onpointerup="endLift('{{lift.controller}}','{{lift.id}}', 0)">Up</button>
-                    </div>
-                    <div class="indicator" id="indicator{{ lift.id }}-0"></div>
-                </div>
-                <div class="buttons" id="button{{ lift.id }}-1">
-                    <div class="button-container">
-                        <button class="button" onpointerdown="startLift('{{lift.controller}}','{{lift.id}}', 1)" onpointerleave="endLift('{{lift.controller}}','{{lift.id}}', 1)" onpointerup="endLift('{{lift.controller}}','{{lift.id}}', 1)">Down</button>
-                    </div>
-                    <div class="indicator" id="indicator{{ lift.id }}-1"></div>
-                </div>
-                <div class="buttons" id="button{{ lift.id }}-2">
-                    <div class="button-container">
-                        <button class="button" onpointerdown="startLift('{{lift.controller}}','{{lift.id}}', 2)" onpointerleave="endLift('{{lift.controller}}','{{lift.id}}', 2)" onpointerup="endLift('{{lift.controller}}','{{lift.id}}', 2)">Lock</button>
-                    </div>
-                    <div class="indicator" id="indicator{{ lift.id }}-2"></div>
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
+    <div class="lifts"></div>
 
     <script>
-        var client_id = Date.now()
-        var active_lifts = []
-        var ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/cli${client_id}`)
+        var client_id = Date.now();
+        var active_lifts = [];
+        var lift_status = [];
+        var ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/cli${client_id}`);
 
+        // Lifts
         function startLift(con_id, lift_id, action) {
-            active_lifts.push(lift_id)
-            ws.send("lift;" + con_id +";"+ lift_id +";"+ action + ";on")
+            active_lifts.push(lift_id);
+            ws.send("lift;" + con_id + ";" + lift_id + ";" + action + ";on");
         }
 
         function endLift(con_id, lift_id, action) {
             if (active_lifts.includes(lift_id)) {
-                ws.send("lift;" + con_id +";"+ lift_id +";"+ action + ";off")
-                active_lifts.splice(active_lifts.indexOf(lift_id), 1)
+                ws.send("lift;" + con_id + ";" + lift_id + ";" + action + ";off");
+                active_lifts.splice(active_lifts.indexOf(lift_id), 1);
             }
         }
 
+        // Indicators
         function activateIndicator(liftId, buttonId) {
-            const indicator = document.querySelector(`#indicator${liftId}-${buttonId}`);
+            var indicator = document.getElementById(`indicator${liftId}-${buttonId}`);
             indicator.classList.add('active');
         }
 
         function deactivateIndicator(liftId, buttonId) {
-            const indicator = document.querySelector(`#indicator${liftId}-${buttonId}`);
+            var indicator = document.getElementById(`indicator${liftId}-${buttonId}`);
             indicator.classList.remove('active');
         }
 
+        function liftStatusChange(lifts) {
+            // Has the number of lifts changed?
+            if (lift_status === lifts) {
+                return;
+            }
+            lift_status = lifts;
+            test = JSON.parse(lift_status);
+            var lifts_div = document.getElementsByClassName("lifts")[0];
+            lifts_div.innerHTML = '';
+            console.log(test);
+            // Sort lifts by id
+            test.sort(function(a, b) {
+                return a.id - b.id;
+            });
+            console.log("Sorted lifts:", test)
+            for (var i = 0; i < test.length; i++) {
+                lift_div = document.createElement("div");
+                lift_div.className = "lift";
+                lifts_div.appendChild(lift_div);
+                h1 = document.createElement("h1");
+                h1.innerHTML = test[i].name;
+                lift_div.appendChild(h1);
+                table = document.createElement("table");
+                table.className = "table";
+                lift_div.appendChild(table);
+                var controller = test[i].controller;
+                var lift_id = test[i].id;
+                for (var j = 0; j < 3; j++) {
+                    button_div = document.createElement("div");
+                    button_div.className = "buttons";
+                    button_div.id = `button${lift_id}-${j}`;
+                    table.appendChild(button_div);
+                    button_container = document.createElement("div");
+                    button_container.className = "button-container";
+                    button_div.appendChild(button_container);
+                    button = document.createElement("button");
+                    button.className = "button";
+                    button.innerHTML = ["Up", "Down", "Lock"][j];
+                    button.setAttribute("onpointerdown", `startLift("${controller}", "${lift_id}", "${j}");`);
+                    button.setAttribute("onpointerleave", `endLift("${controller}", "${lift_id}", "${j}");`);
+                    button.setAttribute("onpointerup", `endLift("${controller}", "${lift_id}", "${j}");`);
+                    button_container.appendChild(button);
+                    indicator = document.createElement("div");
+                    indicator.className = "indicator";
+                    indicator.id = `indicator${lift_id}-${j}`;
+                    button_div.appendChild(indicator);
+                }
+            }
+        }
+
+        // Emergency Stop
         function emergencyStop() {
             ws.send("stop")
         }
 
+        // Message Handling
         ws.onmessage = function(event) {
             var data = event.data.split(";");
             if (data[0] === "moved_lift") {
@@ -171,18 +211,14 @@
                 on_off = data[3];
                 if (on_off === "on") {
                     activateIndicator(lift_id, action);
-                } 
-                else if (on_off === "off") {
+                } else if (on_off === "off") {
                     deactivateIndicator(lift_id, action);
                 }
-            }
-            else if (data[0] === "stop") {
+            } else if (data[0] === "stop") {
                 console.log("EMERGENCY STOP")
-            }
-            else if (data[0] === "lift_status") {
-                console.log("Lift Status", data)
-            }
-            else {
+            } else if (data[0] === "lift_status") {
+                liftStatusChange(event.data.split(";")[1]);
+            } else {
                 console.log("unhandled data:", event)
             }
         }
