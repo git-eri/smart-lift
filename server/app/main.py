@@ -1,5 +1,7 @@
 """Main FastAPI application and routing logic."""
 import ast
+import json
+import asyncio
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.templating import Jinja2Templates
 
@@ -43,6 +45,14 @@ lifts = []
 controllers = []
 clients = []
 
+# Send active lifts to clients every 10 seconds
+async def send_message_to_clients():
+    """Sends a message to all active clients every 10 seconds."""
+    while True:
+        await cm.broadcast_clients("lift_status;" + str(json.dumps(lifts)))
+        await asyncio.sleep(2)
+asyncio.create_task(send_message_to_clients())
+
 @app.get("/")
 async def read_root(request: Request):
     """Serve the client-side application."""
@@ -59,7 +69,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             while True:
                 data = await websocket.receive_text()
                 data = data.split(";")
-                print("Controller sent:", data)
+                # print("Controller sent:", data)
                 if data[0] == "hello":
                     # Controller joining
                     msg_lifts = ast.literal_eval(data[1])
@@ -87,12 +97,13 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             while True:
                 data = await websocket.receive_text()
                 data = data.split(";")
-                print("Client sent:", data)
+                # print("Client sent:", data)
                 if data[0] == "hello":
                     # Client joining
                     pass
                 elif data[0] == "lift":
                     # Lift moved
+                    # TODO: Error when controller not responding back to client
                     con_id = data[1]
                     lift_id = data[2]
                     action = data[3]
@@ -118,9 +129,9 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         cm.disconnect(client_id, websocket)
         if client_id.startswith("con"):
             # Handle controller disconnecting
-            # for lift in lifts:
-            #     if lift["controller"] == client_id:
-            #         lifts.remove(lift)
+            for lift in lifts.copy():
+                if lift["controller"] == client_id:
+                    lifts.remove(lift)
             print(f"Controller {client_id} left")
             await cm.broadcast(f"msg;Controller {client_id} left")
         elif client_id.startswith("cli"):

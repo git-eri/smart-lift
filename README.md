@@ -52,7 +52,7 @@ $ ???
 // Controller ID: must be unique
 const String con_id = "con00001";
 // Lifts start from 0, if Controller handles Lift 6-10 it must be 5
-const uint8_t lift_begin = 5;
+const uint8_t lift_begin = 0;
 // Lift count: How many lifts the controller handles
 const uint8_t lift_count = 5;
 // which Relais for which lift
@@ -63,11 +63,9 @@ const uint8_t lifts[lift_count][3] = { {0,1,2},
                                        {12,13,14}
                                       };
 
-// Wifi stuff
-const char* ssid = ""; //Enter SSID
-const char* password = ""; //Enter Password
-const char* websockets_server_host = ""; //Enter server adress
-const uint16_t websockets_server_port = 8000; // Enter server port
+// Wifi connections
+const String networks[3][4] = { {"SSID","Password","Server IP","Server Port"},
+                               };
 ```
 
 

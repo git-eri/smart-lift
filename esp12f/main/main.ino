@@ -2,12 +2,16 @@
 #include <ArduinoWebsockets.h>
 #include <ESP8266WiFi.h>
 
+// A function that accepts arrays of any type T and any length N, 
+// and returns the length N. 
+template <class T, size_t N> constexpr size_t len(const T(&)[N]) { return N; }
+
 const uint8_t buttonPin = 0; // a button 
 const uint8_t stcpPin = 12;   // GPIO12 	74x595 RCLK/STCP
 const uint8_t shcpPin = 13;   // GPIO13 	74x595 SRCLK/SHCP
 const uint8_t serPin = 14;    // GPIO14 	74x595 SER/DS
 const uint8_t oePin = 5;      // GPIO05 	74x595 OE/output enable active low
-//int actual = -1;
+uint8_t active_net = 0;
 
 using namespace websockets;
 WebsocketsClient client;
@@ -61,37 +65,48 @@ void setup() {
   // Build dictionary for server
   String about_me = "[";
   for (uint8_t i = lift_begin; i < lift_begin + lift_count; i++) {
-    for (uint8_t j = 0; j < 3; j++) {
-      //Serial.println("Lift " + lifts[i][j]);
-      uint8_t number = i + 1;
-      about_me.concat("{'id': '"+ String(i) +"', 'name': 'Lift " + number +"', 'controller': '"+ con_id +"'},");
+    uint8_t number = i + 1;
+    about_me.concat("{'id': '"+ String(i) +"', 'name': 'Lift " + number +"', 'controller': '"+ con_id +"'},");
+  }
+  about_me.concat("]");
+
+  // Search for known networks
+  int numberOfNetworks = WiFi.scanNetworks();
+  for(int i =0; i < numberOfNetworks; i++){
+    for (size_t j = 0; j < len(networks); ++j) {
+      if (networks[j][0] == WiFi.SSID(i)) {
+        Serial.println("Connecting to Network: " + networks[j][0]);
+        active_net = j;
+      }
     }
   }
-  about_me.concat("]");  
 
   // Connect to wifi
-  WiFi.begin(ssid, password);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(networks[active_net][0], networks[active_net][1]);
   // Wait some time to connect to wifi
   for(uint8_t i = 0; i < 10 && WiFi.status() != WL_CONNECTED; i++) {
       Serial.print(".");
       delay(1000);
   }
+  Serial.println("");
   // Check if connected to wifi
   if(WiFi.status() != WL_CONNECTED) {
       Serial.println("No Wifi!");
-      return;
+      void(* resetFunc) (void) = 0;
+      //return;
   }
   Serial.println("Connected to Wifi, Connecting to server...");
   // Try to connect to Websockets server
-  bool connected = client.connect(websockets_server_host, websockets_server_port, "/ws/" + con_id);
+  bool connected = client.connect(networks[active_net][2], networks[active_net][3].toInt(), "/ws/" + con_id);
   if(connected) {
-      Serial.println("Connecetd to Server!");
+      Serial.println("Connecetd to Server: " + networks[active_net][2] + ":" + networks[active_net][3]);
   } else {
       Serial.println("Not Connected!");
   }
   // Run callback when messages are received
   client.onMessage([&](WebsocketsMessage message) {
-    Serial.println(message.data());
+    //Serial.println(message.data());
     String msg_type = getValue(message.data(), ';', 0);
     if (msg_type == "lift") {
       // Handle lift actions

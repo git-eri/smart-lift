@@ -104,65 +104,93 @@
         <!--estop sollte alles blocken und muss erst entsperrt werden-->
         <button class="e-stop" onclick="emergencyStop()">STOP</button>
     </div>
-    <div class="lifts">
-        {% for lift in lifts %}
-        <div class="lift" id="lift{{ lift.id }}">
-            <h3>{{ lift.name }}</h3>
-            <div class="table">
-                <div class="buttons" id="button{{ lift.id }}-0">
-                    <div class="button-container">
-                        <button class="button" onpointerdown="startLift('{{lift.controller}}','{{lift.id}}', 0)" onpointerleave="endLift('{{lift.controller}}','{{lift.id}}', 0)" onpointerup="endLift('{{lift.controller}}','{{lift.id}}', 0)">Up</button>
-                    </div>
-                    <div class="indicator" id="indicator{{ lift.id }}-0"></div>
-                </div>
-                <div class="buttons" id="button{{ lift.id }}-1">
-                    <div class="button-container">
-                        <button class="button" onpointerdown="startLift('{{lift.controller}}','{{lift.id}}', 1)" onpointerleave="endLift('{{lift.controller}}','{{lift.id}}', 1)" onpointerup="endLift('{{lift.controller}}','{{lift.id}}', 1)">Down</button>
-                    </div>
-                    <div class="indicator" id="indicator{{ lift.id }}-1"></div>
-                </div>
-                <div class="buttons" id="button{{ lift.id }}-2">
-                    <div class="button-container">
-                        <button class="button" onpointerdown="startLift('{{lift.controller}}','{{lift.id}}', 2)" onpointerleave="endLift('{{lift.controller}}','{{lift.id}}', 2)" onpointerup="endLift('{{lift.controller}}','{{lift.id}}', 2)">Lock</button>
-                    </div>
-                    <div class="indicator" id="indicator{{ lift.id }}-2"></div>
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
+    <div class="lifts"></div>
 
     <script>
-        var client_id = Date.now()
-        var active_lifts = []
-        var ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/cli${client_id}`)
+        var client_id = Date.now();
+        var active_lifts = [];
+        var lift_status = [];
+        var ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/cli${client_id}`);
 
+        // Lifts
         function startLift(con_id, lift_id, action) {
-            active_lifts.push(lift_id)
-            ws.send("lift;" + con_id +";"+ lift_id +";"+ action + ";on")
+            active_lifts.push(lift_id);
+            ws.send("lift;" + con_id +";"+ lift_id +";"+ action + ";on");
         }
-
         function endLift(con_id, lift_id, action) {
             if (active_lifts.includes(lift_id)) {
-                ws.send("lift;" + con_id +";"+ lift_id +";"+ action + ";off")
-                active_lifts.splice(active_lifts.indexOf(lift_id), 1)
+                ws.send("lift;" + con_id +";"+ lift_id +";"+ action + ";off");
+                active_lifts.splice(active_lifts.indexOf(lift_id), 1);
             }
         }
 
+        // Indicators
         function activateIndicator(liftId, buttonId) {
-            const indicator = document.querySelector(`#indicator${liftId}-${buttonId}`);
+            var indicator = document.getElementById(`indicator${liftId}-${buttonId}`);
             indicator.classList.add('active');
         }
 
         function deactivateIndicator(liftId, buttonId) {
-            const indicator = document.querySelector(`#indicator${liftId}-${buttonId}`);
+            var indicator = document.getElementById(`indicator${liftId}-${buttonId}`);
             indicator.classList.remove('active');
         }
 
+        function liftStatusChange(lifts) {
+            // Has the number of lifts changed?
+            if (lift_status === lifts) {
+                return;
+            }
+            lift_status = lifts;
+            test = JSON.parse(lift_status);
+            var lifts_div = document.getElementsByClassName("lifts")[0];
+            lifts_div.innerHTML = '';
+            console.log(test);
+            // Sort lifts by id
+            test.sort(function(a, b) {
+                return a.id - b.id;
+            }); 
+            console.log("Sorted lifts:", test)
+            for (var i = 0; i < test.length; i++) {
+                lift_div = document.createElement("div");
+                lift_div.className = "lift";
+                lifts_div.appendChild(lift_div);
+                h3 = document.createElement("h3");
+                h3.innerHTML = test[i].name;
+                lift_div.appendChild(h3);
+                table = document.createElement("table");
+                table.className = "table";
+                lift_div.appendChild(table);
+                var controller = test[i].controller;
+                var lift_id = test[i].id;
+                for (var j = 0; j < 3; j++) {
+                    button_div = document.createElement("div");
+                    button_div.className = "buttons";
+                    button_div.id = `button${lift_id}-${j}`;
+                    table.appendChild(button_div);
+                    button_container = document.createElement("div");
+                    button_container.className = "button-container";
+                    button_div.appendChild(button_container);
+                    button = document.createElement("button");
+                    button.className = "button";
+                    button.innerHTML = ["Up", "Down", "Lock"][j];
+                    button.setAttribute( "onpointerdown", `startLift("${controller}", "${lift_id}", "${j}");`);
+                    button.setAttribute( "onpointerleave", `endLift("${controller}", "${lift_id}", "${j}");`);
+                    button.setAttribute( "onpointerup", `endLift("${controller}", "${lift_id}", "${j}");`);
+                    button_container.appendChild(button);
+                    indicator = document.createElement("div");
+                    indicator.className = "indicator";
+                    indicator.id = `indicator${lift_id}-${j}`;
+                    button_div.appendChild(indicator);
+                }
+            }
+        }
+
+        // Emergency Stop
         function emergencyStop() {
             ws.send("stop")
         }
 
+        // Message Handling
         ws.onmessage = function(event) {
             var data = event.data.split(";");
             if (data[0] === "moved_lift") {
@@ -180,7 +208,7 @@
                 console.log("EMERGENCY STOP")
             }
             else if (data[0] === "lift_status") {
-                console.log("Lift Status", data)
+                liftStatusChange(event.data.split(";")[1]);
             }
             else {
                 console.log("unhandled data:", event)
