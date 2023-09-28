@@ -84,6 +84,23 @@
             -ms-user-select: none;
             user-select: none;
         }
+        .logs {
+            width: 100px;
+            padding: 10px;
+            background-color: #fff;
+            color: #000;
+            border: none;
+            cursor: pointer;
+            margin: 5px;
+            text-align: center;
+            white-space: nowrap;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -khtml-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
 
         .indicator {
             width: 20px;
@@ -102,6 +119,7 @@
 <body>
     <div class="menubar">
         <h2>Lift Control Admin Panel</h2>
+        <button class="logs" onclick="window.location.href='/logs'">Logs</button>
         <!--estop sollte alles blocken und muss erst entsperrt werden-->
         <button class="e-stop" onclick="emergencyStop()">STOP</button>
     </div>

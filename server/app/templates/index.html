@@ -125,6 +125,13 @@
 
         // Lifts
         function startLift(con_id, lift_id, action) {
+            if (active_lifts.length > 0) {
+                alert("Nicht mehr als eine Aktion steuerbar!");
+                for (active_lift in active_lifts) {
+                    endLift(active_lift);
+                }
+                return;
+            }
             active_lifts.push(lift_id);
             ws.send("lift;" + con_id + ";" + lift_id + ";" + action + ";on");
         }
@@ -153,27 +160,25 @@
                 return;
             }
             lift_status = lifts;
-            test = JSON.parse(lift_status);
+            lift_status_json = JSON.parse(lift_status);
             var lifts_div = document.getElementsByClassName("lifts")[0];
             lifts_div.innerHTML = '';
-            console.log(test);
+            console.log(lift_status_json);
             // Sort lifts by id
-            test.sort(function(a, b) {
+            lift_status_json.sort(function(a, b) {
                 return a.id - b.id;
             });
-            console.log("Sorted lifts:", test)
-            for (var i = 0; i < test.length; i++) {
+            console.log("Sorted lifts:", lift_status_json)
+            for (var i = 0; i < lift_status_json.length; i++) {
                 lift_div = document.createElement("div");
                 lift_div.className = "lift";
                 lifts_div.appendChild(lift_div);
                 h1 = document.createElement("h1");
-                h1.innerHTML = test[i].name;
+                h1.innerHTML = lift_status_json[i].name;
                 lift_div.appendChild(h1);
                 table = document.createElement("table");
                 table.className = "table";
                 lift_div.appendChild(table);
-                var controller = test[i].controller;
-                var lift_id = test[i].id;
                 for (var j = 0; j < 3; j++) {
                     button_div = document.createElement("div");
                     button_div.className = "buttons";
@@ -185,9 +190,18 @@
                     button = document.createElement("button");
                     button.className = "button";
                     button.innerHTML = ["Up", "Down", "Lock"][j];
-                    button.setAttribute("onpointerdown", `startLift("${controller}", "${lift_id}", "${j}");`);
-                    button.setAttribute("onpointerleave", `endLift("${controller}", "${lift_id}", "${j}");`);
-                    button.setAttribute("onpointerup", `endLift("${controller}", "${lift_id}", "${j}");`);
+                    button.setAttribute(
+                        "onpointerdown",
+                        `startLift("${lift_status_json[i].controller}", "${lift_status_json[i].id}", "${j}");`
+                    );
+                    button.setAttribute(
+                        "onpointerleave",
+                        `endLift("${lift_status_json[i].controller}", "${lift_status_json[i].id}", "${j}");`
+                    );
+                    button.setAttribute(
+                        "onpointerup",
+                        `endLift("${lift_status_json[i].controller}", "${lift_status_json[i].id}", "${j}");`
+                    );
                     button_container.appendChild(button);
                     indicator = document.createElement("div");
                     indicator.className = "indicator";
