@@ -160,6 +160,16 @@ void setup() {
 void loop() {
   if(client.available()) {
     client.poll();
+    static int lastButtonState = HIGH;
+    int buttonState = digitalRead(buttonPin);
+    if (digitalRead(buttonPin) != lastButtonState) {
+      if (buttonState == HIGH) {
+        client.send("error;Test Error");
+        Serial.println("Test Error");
+      }
+      delay(50);
+    }
+    lastButtonState = buttonState;
   }
   else {
     for (uint8_t i = 0; i < 16; i++) {

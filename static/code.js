@@ -13,6 +13,7 @@ function startLift(con_id, lift_id, action) {
                 deactivateIndicator(active_lift, i);
             }
         }
+        active_lifts = [];
         alert("Nicht mehr als eine Aktion steuerbar!");
         return;
     }

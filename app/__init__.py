@@ -4,30 +4,42 @@ from fastapi import WebSocket
 
 class LogConfig(BaseModel):
     """Logging configuration to be set for the server"""
-
-    LOGGER_NAME: str = "smart-lift"
-    LOG_FORMAT: str = "%(levelprefix)s | %(asctime)s | %(message)s"
-    LOG_LEVEL: str = "DEBUG"
-
-    # Logging config
     version = 1
     disable_existing_loggers = False
     formatters = {
         "default": {
             "()": "uvicorn.logging.DefaultFormatter",
-            "fmt": LOG_FORMAT,
+            "fmt": "%(levelprefix)s | %(asctime)s | %(message)s",
             "datefmt": "%d-%m-%Y %H:%M:%S",
         },
+        "file": {
+            "()": "logging.Formatter",
+            "fmt": "%(levelname)s | %(asctime)s | %(message)s",
+            "datefmt": "%d-%m-%Y %H:%M:%S",
+        }
     }
     handlers = {
         "default": {
             "formatter": "default",
             "class": "logging.StreamHandler",
             "stream": "ext://sys.stderr",
+            "level": "INFO",
+        },
+        "debug": {
+            "formatter": "file",
+            "class": "logging.FileHandler",
+            "filename": "debug.log",
+            "level": "DEBUG",
+        },
+        "error": {
+            "formatter": "file",
+            "class": "logging.FileHandler",
+            "filename": "error.log",
+            "level": "ERROR",
         },
     }
     loggers = {
-        LOGGER_NAME: {"handlers": ["default"], "level": LOG_LEVEL},
+        "smart-lift": {"handlers": ["default", "debug", "error"], "level": "DEBUG"},
     }
 
 class ConnectionManager:

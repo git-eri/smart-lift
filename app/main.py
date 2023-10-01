@@ -9,7 +9,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from . import LogConfig, ConnectionManager
 
-
 # Configure logging
 dictConfig(LogConfig().dict())
 logger = logging.getLogger("smart-lift")
@@ -26,6 +25,7 @@ templates = Jinja2Templates(directory="app/templates")
 lifts = []
 controllers = []
 clients = []
+active_lifts = []
 
 # Send active lifts to clients every 10 seconds
 async def send_message_to_clients():
@@ -56,7 +56,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     try:
         if client_id.startswith("con"):
             # Handle Controller event
-            logger.info(f"Controller {client_id} connected")
+            logger.info("Controller %s connected", client_id)
             first_touch = await websocket.receive_text()
             first_touch = first_touch.split(";")
             if first_touch[0] == "hello":
@@ -68,16 +68,14 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             while True:
                 data = await websocket.receive_text()
                 data = data.split(";")
-                logger.debug(f"Controller {client_id} sent: {data}")
+                logger.debug("Controller %s sent: %s", client_id, data)
                 if data[0] == "hello":
                     # Controller joining
                     pass
                 elif data[0] == "moved_lift":
                     # Lift moved
                     if data[4] == "0":
-                        await cm.broadcast_clients(
-                            f"moved_lift;{data[1]};{data[2]};{data[3]}"
-                        )
+                        await cm.broadcast_clients(f"moved_lift;{data[1]};{data[2]};{data[3]}")
                     else:
                         await cm.broadcast(
                             f"error;Controller {client_id} sent invalid data: {data}"
@@ -87,20 +85,18 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     pass
                 elif data[0] == "error":
                     # Error
-                    logger.error(f"Controller {client_id} sent error: {data}")
+                    logger.error("Controller %s sent error: %s", client_id, data)
                 else:
-                    logger.error(f"Controller {client_id} sent something unhandled: {data}")
+                    logger.error("Controller %s sent something unhandled: %s", client_id, data)
 
         elif client_id.startswith("cli"):
             # Handle Client event
-            logger.info(f"Client {client_id} connected")
-            await cm.send_personal_message(
-                client_id, "lift_status;" + str(json.dumps(lifts))
-            )
+            logger.info("Client %s connected", client_id)
+            await cm.send_personal_message(client_id, "lift_status;" + str(json.dumps(lifts)))
             while True:
                 data = await websocket.receive_text()
                 data = data.split(";")
-                logger.debug(f"Client {client_id} sent: {data}")
+                logger.debug("Client %s sent: %s", client_id, data)
                 if data[0] == "hello":
                     # Client joining
                     pass
@@ -111,26 +107,23 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     action = data[3]
                     on_off = data[4]
                     if on_off == "on":
-                        await cm.send_personal_message(
-                            con_id, f"lift;{lift_id};{action};on"
-                        )
+                        await cm.send_personal_message(con_id, f"lift;{lift_id};{action};on")
+                        active_lifts.append(lift_id, client_id)
                     elif on_off == "off":
-                        await cm.send_personal_message(
-                            con_id, f"lift;{lift_id};{action};off"
-                        )
+                        await cm.send_personal_message(con_id, f"lift;{lift_id};{action};off")
                     else:
-                        logger.error(f"Client {client_id} sent something unhandled: {data}")
+                        logger.error("Client %s sent something unhandled: %s", client_id, data)
                 elif data[0] == "stop":
                     # Emergency stop
                     await cm.broadcast("stop")
                 else:
-                    logger.error(f"Client {client_id} sent something unhandled: {data}")
+                    logger.error("Client %s sent something unhandled: %s", client_id, data)
         else:
             # Handle other event
-            logger.error(f"Something else connected: {client_id}")
+            logger.error("Something else connected: %s", client_id)
             while True:
                 data = await websocket.receive_text()
-                logger.error(f"Something else sent something: {client_id}, {data}")
+                logger.error("Something else sent something: %s, %s", client_id, data)
     except WebSocketDisconnect:
         cm.disconnect(client_id, websocket)
         if client_id.startswith("con"):
@@ -140,11 +133,13 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     lifts.remove(lift)
             await cm.broadcast_clients("lift_status;" + str(json.dumps(lifts)))
             await cm.broadcast(f"msg;Controller {client_id} left")
-            logger.info(f"Controller {client_id} left")
+            logger.info("Controller %s left", client_id)
         elif client_id.startswith("cli"):
             # Handle client disconnecting
             # TODO: Client disconnecting while lift is moving
+            if client_id in active_lifts:
+                active_lifts.remove(client_id)
             await cm.broadcast(f"msg;Client {client_id} left")
-            logger.info(f"Client {client_id} left")
+            logger.info("Client %s left", client_id)
         else:
-            logger.error(f"Something else left: {client_id}")
+            logger.error("Something else left: %s", client_id)
