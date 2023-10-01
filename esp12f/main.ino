@@ -77,6 +77,7 @@ void setup() {
       if (networks[j][0] == WiFi.SSID(i)) {
         Serial.println("Connecting to Network: " + networks[j][0]);
         active_net = j;
+        break;
       }
     }
   }
@@ -93,7 +94,7 @@ void setup() {
   Serial.println("");
   // Check if connected to wifi
   if(WiFi.status() != WL_CONNECTED) {
-      Serial.println("No Wifi!");
+      Serial.println("No Network found!");
       delay(500);
       void(* resetFunc) (void) = 0;
       //return;
@@ -104,7 +105,7 @@ void setup() {
   if(connected) {
       Serial.println("Connecetd to Server: " + networks[active_net][2] + ":" + networks[active_net][3]);
   } else {
-      Serial.println("Not Connected!");
+      Serial.println("Could not connect to " + networks[active_net][2]);
   }
   // Run callback when messages are received
   client.onMessage([&](WebsocketsMessage message) {
@@ -133,15 +134,16 @@ void setup() {
     }
     else if (msg_type == "stop") {
       // Handle Emergency Stop
+      Serial.println("EMERGENCY STOP");
       for (uint8_t i = 0; i < 16; i++) {
         hc595Write(i, LOW);
       }
-      Serial.println("EMERGENCY STOP");
       client.send("stop;ok");
       return;
     }
     else if (msg_type == "msg") {
       // Handle messages from server
+      Serial.println("Message: " + message.data());
       return;
     }
     else {
