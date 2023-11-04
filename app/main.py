@@ -1,6 +1,7 @@
 """Main FastAPI application and routing logic."""
 import ast
 import json
+import socket
 import asyncio
 import logging
 from logging.config import dictConfig
@@ -12,20 +13,19 @@ from . import LogConfig, ConnectionManager
 # Configure logging
 dictConfig(LogConfig().dict())
 logger = logging.getLogger("smart-lift")
-
 logger.info("Starting smart-lift server...")
+logger.info("Server IP: %s", socket.gethostbyname(socket.getfqdn()))
 
 app = FastAPI()
-
-app.mount('/static', StaticFiles(directory='static'), name='static')
+app.mount('/static', StaticFiles(directory='app/static'), name='static')
+templates = Jinja2Templates(directory="app/templates")
 
 cm = ConnectionManager()
 
-templates = Jinja2Templates(directory="app/templates")
 lifts = []
 controllers = []
 clients = []
-active_lifts = []
+#active_lifts = []
 
 # Send active lifts to clients every 10 seconds
 async def send_message_to_clients():
@@ -108,7 +108,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     on_off = data[4]
                     if on_off == "on":
                         await cm.send_personal_message(con_id, f"lift;{lift_id};{action};on")
-                        active_lifts.append(lift_id, client_id)
+                        #active_lifts.append(lift_id, client_id)
                     elif on_off == "off":
                         await cm.send_personal_message(con_id, f"lift;{lift_id};{action};off")
                     else:
@@ -137,8 +137,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         elif client_id.startswith("cli"):
             # Handle client disconnecting
             # TODO: Client disconnecting while lift is moving
-            if client_id in active_lifts:
-                active_lifts.remove(client_id)
+            #if client_id in active_lifts:
+            #    active_lifts.remove(client_id)
             await cm.broadcast(f"msg;Client {client_id} left")
             logger.info("Client %s left", client_id)
         else:
