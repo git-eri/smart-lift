@@ -1,46 +1,5 @@
 """Init file for the app module."""
-from pydantic import BaseModel # pylint: disable=no-name-in-module
 from fastapi import WebSocket
-
-class LogConfig(BaseModel):
-    """Logging configuration to be set for the server"""
-    version = 1
-    disable_existing_loggers = False
-    formatters = {
-        "default": {
-            "()": "uvicorn.logging.DefaultFormatter",
-            "fmt": "%(levelprefix)s | %(asctime)s | %(message)s",
-            "datefmt": "%d-%m-%Y %H:%M:%S",
-        },
-        "file": {
-            "()": "logging.Formatter",
-            "fmt": "%(levelname)s | %(asctime)s | %(message)s",
-            "datefmt": "%d-%m-%Y %H:%M:%S",
-        }
-    }
-    handlers = {
-        "default": {
-            "formatter": "default",
-            "class": "logging.StreamHandler",
-            "stream": "ext://sys.stderr",
-            "level": "INFO",
-        },
-        "debug": {
-            "formatter": "file",
-            "class": "logging.FileHandler",
-            "filename": "debug.log",
-            "level": "DEBUG",
-        },
-        "error": {
-            "formatter": "file",
-            "class": "logging.FileHandler",
-            "filename": "error.log",
-            "level": "ERROR",
-        },
-    }
-    loggers = {
-        "smart-lift": {"handlers": ["default", "debug", "error"], "level": "DEBUG"},
-    }
 
 class ConnectionManager:
     """Manages active WebSocket connections."""

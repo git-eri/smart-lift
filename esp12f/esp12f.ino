@@ -1,6 +1,7 @@
 #include "settings.h"
 #include <ArduinoWebsockets.h>
 #include <ESP8266WiFi.h>
+#include <ArduinoJson.h>
 
 // A function that accepts arrays of any type T and any length N, 
 // and returns the length N. 
@@ -63,12 +64,16 @@ void setup() {
   }
 
   // Build dictionary for server
-  String about_me = "[";
+  StaticJsonDocument<700> about_me;
+  about_me["message"] = "hello";
+  JsonObject jlifts = about_me.createNestedObject("lifts");
   for (uint8_t i = lift_begin; i < lift_begin + lift_count; i++) {
-    uint8_t number = i + 1;
-    about_me.concat("{'id': '"+ String(i) +"', 'name': 'Lift " + number +"', 'controller': '"+ con_id +"'},");
+    JsonObject jlift = jlifts.createNestedObject(String(i));
+    jlift["id"] = i;
+    jlift["controller"] = con_id;
   }
-  about_me.concat("]");
+  String about_me_str;
+  serializeJson(about_me, about_me_str);
 
   // Search for known networks
   int numberOfNetworks = WiFi.scanNetworks();
@@ -154,7 +159,7 @@ void setup() {
     }
   });
 
-  client.send("hello;" + about_me);
+  client.send(about_me_str);
 }
 
 void loop() {
