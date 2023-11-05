@@ -100,7 +100,7 @@ void setup() {
   // Check if connected to wifi
   if(WiFi.status() != WL_CONNECTED) {
       Serial.println("No Network found!");
-      delay(500);
+      delay(200);
       void(* resetFunc) (void) = 0;
       //return;
   }
@@ -114,39 +114,80 @@ void setup() {
   }
   // Run callback when messages are received
   client.onMessage([&](WebsocketsMessage message) {
+    StaticJsonDocument<1024> doc_in;
+    DeserializationError error = deserializeJson(doc_in, message.data());
+    if (error) {
+      Serial.print(F("deserialize incoming message failed: "));
+      Serial.println(error.f_str());
+      return;
+    }
+    String message_in = doc_in["message"];
     //Serial.println(message.data());
-    String msg_type = getValue(message.data(), ';', 0);
-    if (msg_type == "lift") {
+    if (message_in == "lift") {
       // Handle lift actions
-      String lift_id = getValue(message.data(), ';', 1);
-      String action = getValue(message.data(), ';', 2);
-      String on_off = getValue(message.data(), ';', 3);
-      if (on_off == "on") {
-        uint8_t value = lifts[lift_id.toInt() - lift_begin][action.toInt()];
+      uint8_t lift_id = doc_in["lift"]["id"];
+      uint8_t action = doc_in["lift"]["action"];
+      uint8_t on_off = doc_in["lift"]["on_off"];
+      if (on_off == 1) {
+        // Handle lift on
+        uint8_t value = lifts[lift_id - lift_begin][action];
         hc595Write(value, HIGH);
-        client.send("moved_lift;" + lift_id +";"+ action +";"+ on_off + ";0");
+        StaticJsonDocument<128> doc_out;
+        doc_out["message"] = "moved_lift";
+        JsonObject lift = doc_out.createNestedObject("lift");
+        lift["id"] = lift_id;
+        lift["action"] = action;
+        lift["on_off"] = on_off;
+        lift["status"] = 0;
+        String doc_out_str;
+        serializeJson(doc_out, doc_out_str);
+        client.send(doc_out_str);
         return;
-      } else if (on_off == "off") {
-        uint8_t value = lifts[lift_id.toInt() - lift_begin][action.toInt()];
+      } else if (on_off == 0) {
+        //Handle lift off
+        uint8_t value = lifts[lift_id - lift_begin][action];
         hc595Write(value, LOW);
-        client.send("moved_lift;" + lift_id +";"+ action +";"+ on_off + ";0");
+        StaticJsonDocument<128> doc_out;
+        doc_out["message"] = "moved_lift";
+        JsonObject lift = doc_out.createNestedObject("lift");
+        lift["id"] = lift_id;
+        lift["action"] = action;
+        lift["on_off"] = on_off;
+        lift["status"] = 0;
+        String doc_out_str;
+        serializeJson(doc_out, doc_out_str);
+        client.send(doc_out_str);
         return;
       }
       else {
-        client.send("moved_lift;" + lift_id +";"+ action +";"+ on_off + ";1");
+        StaticJsonDocument<128> doc_out;
+        doc_out["message"] = "moved_lift";
+        JsonObject lift = doc_out.createNestedObject("lift");
+        lift["id"] = lift_id;
+        lift["action"] = action;
+        lift["on_off"] = on_off;
+        lift["status"] = 1;
+        String doc_out_str;
+        serializeJson(doc_out, doc_out_str);
+        client.send(doc_out_str);
         return;
       }
     }
-    else if (msg_type == "stop") {
+    else if (message_in == "stop") {
       // Handle Emergency Stop
       Serial.println("EMERGENCY STOP");
       for (uint8_t i = 0; i < 16; i++) {
         hc595Write(i, LOW);
       }
-      client.send("stop;ok");
+      StaticJsonDocument<128> doc_out;
+      doc_out["message"] = "stop";
+      doc_out["status"] = "0";
+      String doc_out_str;
+      serializeJson(doc_out, doc_out_str);
+      client.send(doc_out_str);
       return;
     }
-    else if (msg_type == "msg") {
+    else if (message_in == "info") {
       // Handle messages from server
       Serial.println("Message: " + message.data());
       return;
@@ -154,7 +195,13 @@ void setup() {
     else {
       // Handle other bullshit that happens
       Serial.println("Unhandled Event: " + message.data());
-      client.send("error;Unhandled Event;" + message.data());
+      StaticJsonDocument<128> doc_out;
+      doc_out["message"] = "error";
+      doc_out["type"] = "Unhandled Event";
+      doc_out["error"] = message.data();
+      String doc_out_str;
+      serializeJson(doc_out, doc_out_str);
+      client.send(doc_out_str);
       return;
     }
   });
@@ -169,8 +216,14 @@ void loop() {
     int buttonState = digitalRead(buttonPin);
     if (digitalRead(buttonPin) != lastButtonState) {
       if (buttonState == HIGH) {
-        client.send("error;Test Error");
         Serial.println("Test Error");
+        StaticJsonDocument<128> doc_out;
+        doc_out["message"] = "error";
+        doc_out["type"] = "Test Error";
+        doc_out["error"] = "Joke";
+        String doc_out_str;
+        serializeJson(doc_out, doc_out_str);
+        client.send(doc_out_str);
       }
       delay(50);
     }

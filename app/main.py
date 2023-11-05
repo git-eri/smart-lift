@@ -15,6 +15,14 @@ app.mount('/static', StaticFiles(directory='app/static'), name='static')
 
 cm = ConnectionManager()
 
+lifts = json.loads('{}')
+#active_lifts = json.loads('{}')
+
+def get_lift_info():
+    with open('app/lift_info.json') as f:
+        data = json.load(f)
+    return data
+
 @app.get("/", response_class=FileResponse)
 async def read_root():
     """Serve the client-side mobile application."""
@@ -23,9 +31,6 @@ async def read_root():
 async def read_admin():
     """Serve the client-side admin application."""
     return FileResponse("app/templates/admin.html")
-
-
-active_lifts = json.loads('{}')
 
 """
 Main websocket endpoint
@@ -42,33 +47,29 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             while True:
                 data = await websocket.receive_text()
                 data = json.loads(data)
-                logger.debug("Controller %s sent: %s", client_id, data)
+                # logger.debug("Controller %s sent: %s", client_id, data)
                 if data['message'] == 'hello':
                     # Hello message
-                    if client_id not in active_lifts:
-                        active_lifts[client_id] = []
+                    if client_id not in lifts:
+                        lifts[client_id] = {}
+                        lift_info = get_lift_info()
                         for lift in data['lifts']:
-                            active_lifts[client_id].append(lift)
+                            lifts[client_id][lift] = {}
+                            lifts[client_id][lift]['id'] = lift
+                            lifts[client_id][lift]['name'] = lift_info[lift]['name']
                             logger.debug("Controller %s added lift %s", client_id, lift)
+                        message = {}
+                        message['message'] = 'lift_status'
+                        message['lifts'] = lifts
+                        await cm.broadcast_clients(json.dumps(message))
                         logger.info("Controller %s connected", client_id)
                     else:
                         cm.disconnect(client_id, websocket)
                         logger.error("Controller %s already connected", client_id)
-                    print(active_lifts)
                 elif data['message'] == 'moved_lift':
+                    print(data)
                     # Lift moved
-                    """
-                    {
-                        "message": "moved_lift",
-                        "lift": {
-                            "id": 0,
-                            "action": 0,
-                            "on_off": 0,
-                            "status": 0
-                        }
-                    }
-                    """
-                    if data[4] == "0":
+                    if data['lift']['status'] == 0:
                         await cm.broadcast_clients(json.dumps(data))
                     else:
                         await cm.broadcast(
@@ -89,9 +90,47 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             Handle Client event
             """
             logger.info("Client %s connected", client_id)
+            message = {}
+            message['message'] = 'lift_status'
+            message['lifts'] = lifts
+            await cm.send_personal_message(client_id, json.dumps(message))
             while True:
                 data = await websocket.receive_text()
+                data = json.loads(data)
                 logger.debug("Client %s sent: %s", client_id, data)
+                if data['message'] == 'hello':
+                    # Client joining
+                    pass
+                elif data['message'] == 'lift':
+                    # Lift moved
+                    con_id = data['lift']['con_id']
+                    lift_id = data['lift']['id']
+                    action = data['lift']['action']
+                    on_off = data['lift']['on_off']
+                    if on_off == 1:
+                        message = {}
+                        message['message'] = 'lift'
+                        message['lift'] = {}
+                        message['lift']['id'] = lift_id
+                        message['lift']['action'] = action
+                        message['lift']['on_off'] = '1'
+                        await cm.send_personal_message(con_id, json.dumps(message))
+                        #active_lifts.append(lift_id, client_id)
+                    elif on_off == 0:
+                        message = {}
+                        message['message'] = 'lift'
+                        message['lift'] = {}
+                        message['lift']['id'] = lift_id
+                        message['lift']['action'] = action
+                        message['lift']['on_off'] = '0'
+                        await cm.send_personal_message(con_id, json.dumps(message))
+                    else:
+                        logger.error("Client %s sent something unhandled: %s", client_id, data)
+                elif data['message'] == 'error':
+                    # Error
+                    logger.error("Client %s sent error: %s", client_id, data)
+                else:
+                    logger.error("Client %s sent invalid data: %s", client_id, data)
         else:
             """
             Handle other events
@@ -104,10 +143,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     except WebSocketDisconnect:
         cm.disconnect(client_id, websocket)
         if client_id.startswith("con"):
-            active_lifts.pop(client_id, None)
-            print(active_lifts)
+            lifts.pop(client_id, None)
             logger.info("Controller %s left", client_id)
         elif client_id.startswith("cli"):
             logger.info("Client %s left", client_id)
-        logger.info("ID %s left", client_id)
 
