@@ -31,7 +31,7 @@ function startLift(con_id, lift_id, action) {
         lift: {
             con_id: con_id,
             id: lift_id,
-            action: action,  // Beachte, dass "action" statt "i" verwendet werden sollte.
+            action: action,
             on_off: 1
         }
     };

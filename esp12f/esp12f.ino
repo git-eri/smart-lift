@@ -50,6 +50,7 @@ String getValue(String data, char separator, int index){
 
 void setup() {
   Serial.begin(115200);
+  Serial.println();
   Serial.println("I am active!");
   pinMode(buttonPin, INPUT);
   pinMode(stcpPin, OUTPUT);
@@ -108,9 +109,11 @@ void setup() {
   // Try to connect to Websockets server
   bool connected = client.connect(networks[active_net][2], networks[active_net][3].toInt(), "/ws/" + con_id);
   if(connected) {
-      Serial.println("Connecetd to Server: " + networks[active_net][2] + ":" + networks[active_net][3]);
+    Serial.println("Connecetd to Server: " + networks[active_net][2] + ":" + networks[active_net][3]);
+    Serial.println("Debug:" + String(connected));
   } else {
-      Serial.println("Could not connect to " + networks[active_net][2]);
+    Serial.println("Could not connect to " + networks[active_net][2]);
+    Serial.println("Debug:" + String(connected));
   }
   // Run callback when messages are received
   client.onMessage([&](WebsocketsMessage message) {
@@ -160,6 +163,7 @@ void setup() {
         return;
       }
       else {
+        // Error
         StaticJsonDocument<128> doc_out;
         doc_out["message"] = "moved_lift";
         JsonObject lift = doc_out.createNestedObject("lift");
