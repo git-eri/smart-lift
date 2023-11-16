@@ -78,8 +78,8 @@ void setup() {
 
   // Search for known networks
   int numberOfNetworks = WiFi.scanNetworks();
-  for(int i =0; i < numberOfNetworks; i++){
-    for (size_t j = 0; j < len(networks); ++j) {
+  for (size_t j = 0; j < len(networks); ++j) {
+    for(int i =0; i < numberOfNetworks; i++){
       if (networks[j][0] == WiFi.SSID(i)) {
         Serial.println("Connecting to Network: " + networks[j][0]);
         active_net = j;
@@ -93,9 +93,9 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(networks[active_net][0], networks[active_net][1]);
   // Wait some time to connect to wifi
-  for(uint8_t i = 0; i < 10 && WiFi.status() != WL_CONNECTED; i++) {
+  for(uint8_t i = 0; i < 50 && WiFi.status() != WL_CONNECTED; i++) {
       Serial.print(".");
-      delay(500);
+      delay(200);
   }
   Serial.println("");
   // Check if connected to wifi
@@ -110,10 +110,8 @@ void setup() {
   bool connected = client.connect(networks[active_net][2], networks[active_net][3].toInt(), "/ws/" + con_id);
   if(connected) {
     Serial.println("Connecetd to Server: " + networks[active_net][2] + ":" + networks[active_net][3]);
-    Serial.println("Debug:" + String(connected));
   } else {
     Serial.println("Could not connect to " + networks[active_net][2]);
-    Serial.println("Debug:" + String(connected));
   }
   // Run callback when messages are received
   client.onMessage([&](WebsocketsMessage message) {
@@ -237,8 +235,12 @@ void loop() {
     for (uint8_t i = 0; i < 16; i++) {
       hc595Write(i, LOW);
     }
-    Serial.println("Server not available! Retrying now...");
-    delay(500);
+    if(WiFi.status() != WL_CONNECTED) {
+      Serial.println("Wifi got disconnected!");
+    } else {
+      Serial.println("Server not available! Retrying now...");
+    }
+    delay(200);
     resetFunc();
   }
 }

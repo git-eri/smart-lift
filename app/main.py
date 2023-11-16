@@ -46,7 +46,11 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             """
             while True:
                 data = await websocket.receive_text()
-                data = json.loads(data)
+                try:
+                    data = json.loads(data)
+                except:
+                    logger.error("Controller %s sent invalid data: %s", client_id, data)
+                    continue
                 # logger.debug("Controller %s sent: %s", client_id, data)
                 if data['message'] == 'hello':
                     # Hello message
@@ -96,7 +100,11 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             await cm.send_personal_message(client_id, json.dumps(message))
             while True:
                 data = await websocket.receive_text()
-                data = json.loads(data)
+                try:
+                    data = json.loads(data)
+                except:
+                    logger.error("Client %s sent invalid data: %s", client_id, data)
+                    continue
                 logger.debug("Client %s sent: %s", client_id, data)
                 if data['message'] == 'hello':
                     # Client joining
