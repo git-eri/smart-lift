@@ -32,13 +32,13 @@ handlers:
   #   encoding: utf8
 loggers:
   uvicorn.error:
-    level: DEBUG
+    level: INFO
     handlers:
       - default
       - file
     propagate: no
   uvicorn.access:
-    level: DEBUG
+    level: INFO
     handlers:
       - access
       - file

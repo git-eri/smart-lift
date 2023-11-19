@@ -28,5 +28,20 @@
     },
     "9": {
         "name": "Lift 10"
+    },
+    "10": {
+        "name": "Lift 11 (Test)"
+    },
+    "11": {
+        "name": "Lift 12 (Test)"
+    },
+    "12": {
+        "name": "Lift 13 (Test)"
+    },
+    "13": {
+        "name": "Lift 14 (Test)"
+    },
+    "14": {
+        "name": "Lift 15 (Test)"
     }
 }

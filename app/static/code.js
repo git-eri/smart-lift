@@ -69,20 +69,19 @@ function deactivateIndicator(liftId, buttonId) {
 }
 
 function liftStatusChange(lifts_new) {
+    var lifts_div = document.getElementsByClassName("lifts")[0];
+    lifts_div.innerHTML = '';
     // Has the number of lifts changed?
     if (lifts === lifts_new) {
         console.log("lift status unchanged");
         return;
     }
     lifts = lifts_new;
-    var lifts = JSON.parse(JSON.stringify(lifts));
-    var lifts_div = document.getElementsByClassName("lifts")[0];
-    lifts_div.innerHTML = '';
+    lifts = JSON.parse(JSON.stringify(lifts));
+    console.log(lifts)
     // Sort lifts by id
-    //lifts.sort(function(a, b) {
-    //    return a.id - b.id;
-    //});
-    //console.log("Sorted lifts:", lifts)
+    //Object.values(lifts).sort((a,b) => a.count - b.count)
+    console.log("Sorted lifts:", lifts)
     for (var con_id in lifts) {
         for (var i in lifts[con_id]) {
             var lift_div = document.createElement("div");

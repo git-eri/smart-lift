@@ -15,7 +15,7 @@ The server communicates to one or more controllers with websockets too. The cont
 
 - Docker
 - Python 3.10
-- Raspberry Pi Pico
+- Any Relais Board based on ESP8266
 
 Lint before commit!
 ```bash
@@ -31,8 +31,8 @@ The server handles the communication between the controllers and the clients.
 For local testing
 
 ```bash
-$ cd server
-$ uvicorn app.main:app --port 8000 --reload --host 0.0.0.0
+$ cd app
+$ uvicorn app.main:app --host=0.0.0.0 --port=8000 --log-config=app/log_conf.yml
 ```
 
 ### Deployment
@@ -46,6 +46,14 @@ $ ???
 ```
 
 ## Controller (ESP8266)
+
+### Dependencies
+
+- [Arduino IDE](https://www.arduino.cc/en/software)
+- ESP8266 (https://dl.espressif.com/dl/package_esp32_index.json)
+- [ArduinoJson](https://arduinojson.org/)
+- [WebSockets](https://github.com/gilmaimon/ArduinoWebsockets)
+
 
 ### settings.h
 ```c
@@ -66,24 +74,6 @@ const uint8_t lifts[lift_count][3] = { {15,14,13},
 // Wifi connections
 const String networks[3][4] = { {"SSID","Password","Server IP","Server Port"},
                                };
-```
-
-
-
-## Controller (Pico)
-
-The controller is connected via wifi and should have its own ip address. The server communicates to the controller via http requests. The controller talks back to the server to give information which lifts are active and if the system is healthy.
-
-### auth.json
-
-This file holds informations about possible wifi networks to connect with and the ip address of the server for that network. It should look like this and should be placed in the root directory of the controller:
-
-```json
-{
-    "ssid": "wifi-name",
-    "password": "wifi-password",
-    "server": "ip address of server"
-}
 ```
 
 
