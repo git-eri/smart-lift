@@ -17,7 +17,10 @@ class ConnectionManager:
             for connection_id, connection in self.active_connections:
                 if connection_id == client_id:
                     self.active_connections.remove((client_id, connection))
-                    logger.debug("Controller %s already connected, removing old connection", client_id)
+                    logger.debug(
+                        "Controller %s already connected, removing old connection",
+                        client_id
+                    )
         self.active_connections.append((client_id, websocket))
 
     async def disconnect(self, client_id: str, websocket: WebSocket):
@@ -29,7 +32,10 @@ class ConnectionManager:
                 logger.debug("Lifts were removed from lifts dict for controller %s", client_id)
                 # await websocket.close()
         else:
-            logger.debug("Connection %s was already removed from active connections and lifts dict", client_id)
+            logger.debug(
+                "Connection %s was already removed from active connections and lifts dict",
+                client_id
+            )
 
     async def send_personal_message(self, client_id: str, message: str):
         """Sends a message to a specific connection."""
@@ -58,3 +64,9 @@ app = FastAPI()
 app.mount('/static', StaticFiles(directory='app/static'), name='static')
 
 cm = ConnectionManager()
+
+def get_lift_info():
+    """Get lift info from lift_info.json"""
+    with open('app/lift_info.json', encoding="utf8") as f:
+        data = json.load(f)
+    return data

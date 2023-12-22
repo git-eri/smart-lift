@@ -2,22 +2,15 @@
 import json
 from fastapi import WebSocket
 
-from . import logger, lifts, cm
+from . import logger, lifts, cm, get_lift_info
 
-def get_lift_info():
-    with open('app/lift_info.json') as f:
-        data = json.load(f)
-    return data
-
-"""
-Handle Controller event
-"""
 async def handler(websocket: WebSocket, client_id: str):
+    """Handle Controller events"""
     while True:
         data = await websocket.receive_text()
         try:
             data = json.loads(data)
-        except:
+        except json.JSONDecodeError:
             logger.error("Controller %s sent invalid data: %s", client_id, data)
             continue
         # logger.debug("Controller %s sent: %s", client_id, data)

@@ -1,3 +1,4 @@
+"""Main application file"""
 import json
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -13,9 +14,6 @@ async def read_admin():
     """Serve the client-side admin application."""
     return FileResponse("app/templates/admin.html")
 
-"""
-Main websocket endpoint
-"""
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """Communicates with the client-side application."""
@@ -26,10 +24,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 
         elif client_id.startswith("cli"):
             await client.handler(websocket, client_id)
+
         else:
-            """
-            Handle other events
-            """
             logger.error("Something else connected: %s", client_id)
             while True:
                 data = await websocket.receive_text()
@@ -45,7 +41,3 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             logger.info("Controller %s left", client_id)
         elif client_id.startswith("cli"):
             logger.info("Client %s left", client_id)
-
-    except Exception as e:
-        await cm.disconnect(client_id, websocket)
-        logger.exception(e)

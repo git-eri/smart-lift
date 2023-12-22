@@ -4,10 +4,8 @@ from fastapi import WebSocket
 
 from . import logger, lifts, cm
 
-"""
-Handle Client event
-"""
 async def handler(websocket: WebSocket, client_id: str):
+    """Handle Client events"""
     logger.info("Client %s connected", client_id)
     message = {}
     message['message'] = 'lift_status'
@@ -17,7 +15,7 @@ async def handler(websocket: WebSocket, client_id: str):
         data = await websocket.receive_text()
         try:
             data = json.loads(data)
-        except:
+        except json.JSONDecodeError:
             logger.error("Client %s sent invalid data: %s", client_id, data)
             continue
         logger.debug("Client %s sent: %s", client_id, data)
