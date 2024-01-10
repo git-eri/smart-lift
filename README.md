@@ -1,18 +1,19 @@
 # smart-lift
 
-This project is a web application for a smart lift system. 
+This project is a web application to smartify multiple car lifts. 
 
 It is written in Python and uses FastAPI as a web framework. The frontend is written in HTML and Javascript and uses websockets to communicate with the server.
 
 The server communicates to one or more controllers with websockets too. The controllers are relais boards using ESP8266's and are programmed using Arduino.
 
-This system is made for lifts that have 3 actions: up, down and lock. Each relais on the board simulates a button press for the lift.
+This system is made for double parking lifts that have 3 actions each: up, down and lock. Each relais on the board simulates a button press for the lift.
 
 My lifts came with an annoying keyswitch with bad placement. I removed them all, made a custom Box with 3 buttons for every lift. That way every lift can be controlled from one place or with your smartphone. Each button is in parallel to every relais, so both are functional.
 
-![Controlbox Outside](media/controlbox_outside.png?raw=true)
-
-![Controlbox Inside](media/controlbox_inside.png?raw=true)
+<p float="left">
+  <img src="media/controlbox_inside.png" height="400">
+  <img src="media/controlbox_outside.png" height="200">
+</p>
 
 
 ## Getting Started
@@ -66,7 +67,7 @@ $ ./run-docker.sh
 
 #### Relaisboard & Layout
 
-![Relaisboard](media/relais_board.png?raw=true)
+<img src="media/relais_board.png" height="200">
 
 #### Dependencies
 
@@ -95,7 +96,7 @@ const uint8_t lifts[lift_count][3] = { {15,14,13},
                                       };
 // Wifi connections
 // If you have more than one Wifi connection, change the 1 to the number of connections.
-const String networks[1][4] = { {"SSID","Password","Server IP","Server Port"},
+const String networks[1][4] = { {"SSID","Password","Server IP","Server Port (8000)"},
                                };
 ```
 
