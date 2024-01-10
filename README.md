@@ -6,13 +6,21 @@ It is written in Python and uses FastAPI as a web framework. The frontend is wri
 
 The server communicates to one or more controllers with websockets too. The controllers are relais boards using ESP8266's and are programmed using Arduino.
 
+This system is made for lifts that have 3 actions: up, down and lock. Each relais on the board simulates a button press for the lift.
+
+My lifts came with an annoying keyswitch with bad placement. I removed them all, made a custom Box with 3 buttons for every lift. That way every lift can be controlled from one place or with your smartphone. Each button is in parallel to every relais, so both are functional.
+
+![Controlbox Outside](media/controlbox_outside.png?raw=true)
+
+![Controlbox Inside](media/controlbox_inside.png?raw=true)
+
 
 ## Getting Started
 - Clone the repository and install all dependencies (Docker, [Arduino librarys](#dependencies)). 
 ```bash
 $ git clone https://github.com/git-eri/smart-lift.git
 ```
-- Copy the [defaults.h](esp12f/defaults.h) and rename the file to settings.h. Edit the [settings.h](#settings.h) to fit your needs.
+- Copy the [defaults.h](esp12f/defaults.h) and rename the file to settings.h. Edit the [settings.h](#settingsh) to fit your needs.
 - Programm your controller board(s) with the sketch [esp12f.ino](esp12f/esp12f.ino) that is using your settings.
 - Run the [deploy.sh](deploy.sh) script
 ```bash
@@ -56,6 +64,10 @@ $ ./run-docker.sh
 
 ### Controller (ESP8266)
 
+#### Relaisboard & Layout
+
+![Relaisboard](media/relais_board.png?raw=true)
+
 #### Dependencies
 
 - [Arduino IDE](https://www.arduino.cc/en/software)
@@ -66,22 +78,24 @@ $ ./run-docker.sh
 
 #### settings.h
 ```c
-// Controller ID: must be unique
-const String con_id = "con0";
-// Lifts start from 0, if Controller handles Lift 6-10 it must be 5
+// Controller ID: must be unique!
+const String con_id = "con1";
+// Lifts start from 0. If controller handles lifts 6-10 it must be 5.
 const uint8_t lift_begin = 0;
-// Lift count: How many lifts the controller handles
+// Lift count: How many lifts the controller handles.
 const uint8_t lift_count = 5;
-// which Relais for which lift
+// Which relais-id's for which lift, they are in order of the lifts.
+// This example is for a 16 relais board with 5 connected lifts per controller.
+// Each lift uses 3 relais (up, down, lock).
 const uint8_t lifts[lift_count][3] = { {15,14,13},
                                        {12,11,10},
                                        {9,8,6},
                                        {5,4,3},
                                        {2,1,0}
                                       };
-
 // Wifi connections
-const String networks[3][4] = { {"SSID","Password","Server IP","Server Port"},
+// If you have more than one Wifi connection, change the 1 to the number of connections.
+const String networks[1][4] = { {"SSID","Password","Server IP","Server Port"},
                                };
 ```
 
