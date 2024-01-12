@@ -8,12 +8,15 @@ The server communicates to one or more controllers with websockets too. The cont
 
 This system is made for double parking lifts that have 3 actions each: up, down and lock. Each relais on the board simulates a button press for the lift.
 
+| Mobile  | Desktop |
+| ------------- | ------------- |
+| <img src="media/mobile.gif" height="200">  | <img src="media/desktop.png" height="200">  |
+
 My lifts came with an annoying keyswitch with bad placement. I removed them all, made a custom Box with 3 buttons for every lift. That way every lift can be controlled from one place or with your smartphone. Each button is in parallel to every relais, so both are functional.
 
-<p float="left">
-  <img src="media/controlbox_inside.png" height="400">
-  <img src="media/controlbox_outside.png" height="200">
-</p>
+| Inside  | Front |
+| ------------- | ------------- |
+| <img src="media/controlbox_inside.png" height="400">  | <img src="media/controlbox_outside.png" height="200">  |
 
 This setup is just tested for that specific [relais board](#relaisboard--layout) but the settings are easily adaptable to interface with boards with more or less relais.
 
