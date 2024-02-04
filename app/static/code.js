@@ -1,7 +1,6 @@
-var client_id = Date.now();
 var active_lifts = [];
 var lifts = [];
-var ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/cli${client_id}`);
+var ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/cli${Date.now()}`);
 
 // Lifts
 function startLift(con_id, lift_id, action) {
@@ -140,10 +139,10 @@ ws.onmessage = function(event) {
         lift_id = data.lift.id;
         action = data.lift.action;
         on_off = data.lift.on_off;
-        if (on_off === 1) {
+        if (on_off === "1") {
             activateIndicator(lift_id, action);
             return;
-        } else if (on_off === 0) {
+        } else if (on_off === "0") {
             deactivateIndicator(lift_id, action);
             return;
         }

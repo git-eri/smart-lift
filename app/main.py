@@ -13,6 +13,10 @@ async def read_root():
 async def read_admin():
     """Serve the client-side admin application."""
     return FileResponse("app/templates/admin.html")
+@app.get("/sim", response_class=FileResponse)
+async def read_sim():
+    """Serve the client-side sim application."""
+    return FileResponse("app/templates/sim.html")
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
