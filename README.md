@@ -96,7 +96,7 @@ This file is used by the frontend so you can name your lifts. Change this file a
 - [Arduino IDE](https://www.arduino.cc/en/software)
 - ESP8266 (https://dl.espressif.com/dl/package_esp32_index.json)
 - [ArduinoJson](https://arduinojson.org/)
-- [WebSockets](https://github.com/gilmaimon/ArduinoWebsockets)
+- [WebSockets](https://github.com/Links2004/arduinoWebSockets)
 
 ### Build & Upload
 
@@ -130,7 +130,7 @@ const String networks[1][4] = { {"SSID","Password","Server IP","Server Port (800
 For testing and debugging purposes there is a controller simulator. It can be accessed at ```/sim#0-5```. You can change the number of lifts by changing the numbers after the URI fragment (```#```). The Page will then simulate a controller with the given range of lifts. It responds like a controller and the indicator lights will light up when a lift is moving.
 
 ### Known Issues
-- [ ] Sometimes the controller's websocket connection gets lost. This needs to be handled and fixed. Maybe a issue with the ESP8266Websockets library. (Edit: The library seems to fail when a binary ping is sent that includes 0x00, then it responds with a wrong pong. Need to switch to another library)
+- [ ] Controller has to check if a client has disconnected while a lift is moving. Currently the relais will stay on and the client has to reconnect to stop the lift.
 - [ ] The mobile frontend has to act in a safe way when a controller get's disconnected. Currently if a controller gets disconnected, the disconnected lifts disappear and the ui will move to the other controller. If a button was held down at this time, the lift which is now shown will then move. This needs to be fixed. 
   - Maybe leave the disconnected lifts but grey them out, and show a message so the button press is aborted. Then the lifts can be removed after a timeout.
 - [ ] The frontend doesn't sort the lifts by id. This needs to be fixed. Currently the lifts are sorted by the time the controller connected first.
