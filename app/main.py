@@ -2,8 +2,11 @@
 import json
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 
-from . import logger, app, cm, lifts, client, controller
+from . import logger, app, cm, online_lifts, client, controller
+
+Instrumentator().instrument(app, metric_namespace='smartlift').expose(app)
 
 @app.get("/", response_class=FileResponse)
 async def read_root():
@@ -18,9 +21,10 @@ async def read_sim():
     """Serve the client-side sim application."""
     return FileResponse("app/templates/sim.html")
 
+
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
-    """Communicates with the client-side application."""
+    """Communicates with the clients application."""
     await cm.connect(client_id, websocket)
     try:
         if client_id.startswith("con"):
@@ -33,15 +37,19 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             logger.error("Something else connected: %s", client_id)
             while True:
                 data = await websocket.receive_text()
-                logger.error("Something else sent something: %s, %s", client_id, data)
+                logger.error("Something sus sent something: %s, %s", client_id, data)
 
     except WebSocketDisconnect:
         await cm.disconnect(client_id, websocket)
-        if client_id.startswith("con") and client_id not in lifts:
+        if client_id.startswith("con") and client_id not in online_lifts:
             message = {}
-            message['message'] = 'lift_status'
-            message['lifts'] = lifts
+            message['case'] = 'online_lifts'
+            message['lifts'] = online_lifts
             await cm.broadcast_clients(json.dumps(message))
             logger.info("Controller %s left", client_id)
         elif client_id.startswith("cli"):
+            message = {}
+            message['case'] = 'client_disconnect'
+            message['client_id'] = client_id
+            await cm.broadcast_clients(json.dumps(message))
             logger.info("Client %s left", client_id)

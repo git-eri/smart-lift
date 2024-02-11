@@ -35,6 +35,9 @@ $ ./deploy.sh
 - The docker container should be up and running. Now you can turn on your programmed controllers and access the interface in your browser on port ```8000```. You should see the lifts being addded to the interface as the controllers connect to the server.
 - If you reached this step, you may now figure out how to interface with your lift. My lift was controlled using a key switch which i just replaced with the box shown above and connected everything up. You could also use one controller with at least 3 relais for every lift.
 
+### Docker Compose
+If you want to use a complete stack with grafana and prometheus for monitoring then just use ```docker compose up --build``` to start the stack.
+
 ## Development
 
 ### What you need

@@ -59,11 +59,11 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 			for (uint8_t i = 0; i < 16; i++) {
 				hc595Write(i, LOW);
 			}
-			USE_SERIAL.printf("Cause:\n");
+			USE_SERIAL.printf("Cause:");
 			if(WiFi.status() != WL_CONNECTED) {
-				USE_SERIAL.println("Wifi got disconnected! Retrying now...");
+				USE_SERIAL.println("Wifi got disconnected! Resetting now...");
 			} else {
-				USE_SERIAL.println("Server not available! Retrying now...");
+				USE_SERIAL.println("Server not available! Resetting now...");
 			}
 			delay(200);
 			resetFunc();
@@ -74,16 +74,14 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 			USE_SERIAL.printf("Connected to url: %s\n", payload);
 			// Build dictionary for server
 			StaticJsonDocument<700> about_me;
-			about_me["message"] = "hello";
-			JsonObject jlifts = about_me.createNestedObject("lifts");
+			about_me["case"] = "hello";
+      JsonArray jlifts = about_me.createNestedArray("lifts");
 			for (uint8_t i = lift_begin; i < lift_begin + lift_count; i++) {
-				JsonObject jlift = jlifts.createNestedObject(String(i));
-				jlift["id"] = i;
-				jlift["controller"] = con_id;
+				jlifts.add(i);;
 			}
 			String about_me_str;
 			serializeJson(about_me, about_me_str);
-
+			USE_SERIAL.printf("Sending: %s\n", about_me_str);
 			webSocket.sendTXT(about_me_str);
 		}
 			break;
@@ -97,71 +95,40 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 				USE_SERIAL.println(error.f_str());
 				return;
 			}
-			String message_in = doc_in["message"];
-			//USE_SERIAL.println(payload);
-			if (message_in == "lift") {
+
+			if (doc_in["case"] == "move_lift") {
 				// Handle lift actions
-				uint8_t lift_id = doc_in["lift"]["id"];
-				uint8_t action = doc_in["lift"]["action"];
-				uint8_t on_off = doc_in["lift"]["on_off"];
-				if (on_off == 1) {
-					// Handle lift on
-					uint8_t value = lifts[lift_id - lift_begin][action];
+        uint8_t lift_id = doc_in["lift_id"];
+        uint8_t direction = doc_in["direction"];
+				uint8_t value = lifts[lift_id - lift_begin][direction];
+				if (doc_in["toggle"] == 1) {
 					hc595Write(value, HIGH);
-					StaticJsonDocument<128> doc_out;
-					doc_out["message"] = "moved_lift";
-					JsonObject lift = doc_out.createNestedObject("lift");
-					lift["id"] = lift_id;
-					lift["action"] = action;
-					lift["on_off"] = on_off;
-					lift["status"] = 0;
-					String doc_out_str;
-					serializeJson(doc_out, doc_out_str);
-					webSocket.sendTXT(doc_out_str);
-					return;
-				} else if (on_off == 0) {
-					//Handle lift off
-					uint8_t value = lifts[lift_id - lift_begin][action];
-					hc595Write(value, LOW);
-					StaticJsonDocument<128> doc_out;
-					doc_out["message"] = "moved_lift";
-					JsonObject lift = doc_out.createNestedObject("lift");
-					lift["id"] = lift_id;
-					lift["action"] = action;
-					lift["on_off"] = on_off;
-					lift["status"] = 0;
-					String doc_out_str;
-					serializeJson(doc_out, doc_out_str);
-					webSocket.sendTXT(doc_out_str);
-					return;
 				} else {
-					// Error
-					StaticJsonDocument<128> doc_out;
-					doc_out["message"] = "moved_lift";
-					JsonObject lift = doc_out.createNestedObject("lift");
-					lift["id"] = lift_id;
-					lift["action"] = action;
-					lift["on_off"] = on_off;
-					lift["status"] = 1;
-					String doc_out_str;
-					serializeJson(doc_out, doc_out_str);
-					webSocket.sendTXT(doc_out_str);
-					return;
+					hc595Write(value, LOW);
 				}
-			} else if (message_in == "stop") {
+				StaticJsonDocument<128> doc_out;
+				doc_out["case"] = "lift_moved";
+				doc_out["lift_id"] = doc_in["lift_id"];
+				doc_out["direction"] = doc_in["direction"];
+				doc_out["toggle"] = doc_in["toggle"];
+				String doc_out_str;
+				serializeJson(doc_out, doc_out_str);
+				webSocket.sendTXT(doc_out_str);
+				return;
+			} else if (doc_in["case"] == "stop") {
 				// Handle Emergency Stop
 				USE_SERIAL.println("EMERGENCY STOP");
 				for (uint8_t i = 0; i < 16; i++) {
 					hc595Write(i, LOW);
 				}
 				StaticJsonDocument<128> doc_out;
-				doc_out["message"] = "stop";
+				doc_out["case"] = "stop";
 				doc_out["status"] = "0";
 				String doc_out_str;
 				serializeJson(doc_out, doc_out_str);
 				webSocket.sendTXT(doc_out_str);
 				return;
-			} else if (message_in == "info") {
+			} else if (doc_in["case"] == "info") {
 				// Handle messages from server
 				USE_SERIAL.printf("Message: %s\n", payload);
 				return;
@@ -169,7 +136,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 				// Handle other bullshit that happens
 				USE_SERIAL.printf("Unhandled Event: %s\n", payload);
 				StaticJsonDocument<128> doc_out;
-				doc_out["message"] = "error";
+				doc_out["case"] = "error";
 				doc_out["type"] = "Unhandled Event";
 				doc_out["error"] = payload;
 				String doc_out_str;
@@ -209,13 +176,21 @@ void setup() {
 	}
 
 	USE_SERIAL.begin(115200);
-  	USE_SERIAL.println();
-  	USE_SERIAL.println("I am active!");
-	USE_SERIAL.setDebugOutput(true);
+	USE_SERIAL.println();
+	USE_SERIAL.println("I am active!");
+	USE_SERIAL.setDebugOutput(false);
 	USE_SERIAL.println();
 
 	// Search for known networks
-	int numberOfNetworks = WiFi.scanNetworks();
+	int numberOfNetworks;
+  for(uint8_t i = 0; i < 3 || numberOfNetworks < 1; i++) {
+    numberOfNetworks = WiFi.scanNetworks();
+  }
+  if (numberOfNetworks < 1) {
+    USE_SERIAL.println("No Networks found. Resetting now ...");
+    delay(200);
+    resetFunc();
+  }
 	for (size_t j = 0; j < len(networks); ++j) {
 		for(int i =0; i < numberOfNetworks; i++){
 			if (networks[j][0] == WiFi.SSID(i)) {
@@ -239,7 +214,7 @@ void setup() {
 
 	// Check if connected to wifi
 	if(WiFi.status() != WL_CONNECTED) {
-		USE_SERIAL.println("Could not connect to " + networks[active_net][0]);
+		USE_SERIAL.println("Could not connect to " + networks[active_net][0] +". Resetting now...");
 		delay(200);
 		resetFunc();
 	}
@@ -263,7 +238,7 @@ void loop() {
     if (buttonState == HIGH) {
       USE_SERIAL.println("Test Error");
       StaticJsonDocument<128> doc_out;
-      doc_out["message"] = "error";
+      doc_out["case"] = "error";
       doc_out["type"] = "Test Error";
       doc_out["error"] = "Joke";
       String doc_out_str;

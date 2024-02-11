@@ -4,6 +4,8 @@ import logging
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 
+online_lifts = {}
+active_lifts = {}
 class ConnectionManager:
     """Manages active WebSocket connections."""
 
@@ -27,8 +29,8 @@ class ConnectionManager:
         """Removes a connection from the list of active connections."""
         if (client_id, websocket) in self.active_connections:
             self.active_connections.remove((client_id, websocket))
-            if client_id.startswith("con") and client_id in lifts:
-                lifts.pop(client_id, None)
+            if client_id.startswith("con") and client_id in online_lifts:
+                online_lifts.pop(client_id, None)
                 logger.debug("Lifts were removed from lifts dict for controller %s", client_id)
                 # await websocket.close()
         else:
@@ -56,9 +58,6 @@ class ConnectionManager:
 
 logger = logging.getLogger(__name__)
 logger.info("Starting smart-lift server...")
-
-lifts = json.loads('{}')
-#active_lifts = json.loads('{}')
 
 app = FastAPI()
 app.mount('/static', StaticFiles(directory='app/static'), name='static')

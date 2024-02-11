@@ -1,23 +1,24 @@
 var active_lifts = [];
 var lifts = [];
-var ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/cli${Date.now()}`);
+var client_id = "cli" + Date.now();
+
+var ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/${client_id}`);
 
 // Lifts
-function startLift(con_id, lift_id, action) {
+function startLift(con_id, lift_id, direction) {
     active_lifts.push(lift_id);
     if (active_lifts.length > 1) {
         for (active_lift in active_lifts) {
             for (i = 0; i < 3; i++) {
-                var obj = {
-                    message: "lift",
-                    lift: {
-                        con_id: con_id,
-                        id: lift_id,
-                        action: action,
-                        on_off: 0
-                    }
+                var message = {
+                    case: "move_lift",
+                    con_id: con_id,
+                    client_id: client_id,
+                    lift_id: lift_id,
+                    direction: direction,
+                    toggle: 0
                 };
-                ws.send(JSON.stringify(obj));
+                ws.send(JSON.stringify(message));
                 deactivateIndicator(active_lift, i);
             }
         }
@@ -25,30 +26,28 @@ function startLift(con_id, lift_id, action) {
         alert("Nicht mehr als eine Aktion steuerbar!");
         return;
     }
-    var obj = {
-        message: "lift",
-        lift: {
-            con_id: con_id,
-            id: lift_id,
-            action: action,
-            on_off: 1
-        }
+    var message = {
+        case: "move_lift",
+        con_id: con_id,
+        client_id: client_id,
+        lift_id: lift_id,
+        direction: direction,
+        toggle: 1
     };
-    ws.send(JSON.stringify(obj));
+    ws.send(JSON.stringify(message));
 }
 
-function endLift(con_id, lift_id, action) {
+function endLift(con_id, lift_id, direction) {
     if (active_lifts.includes(lift_id)) {
-        var obj = {
-            message: "lift",
-            lift: {
-                con_id: con_id,
-                id: lift_id,
-                action: action,  // Beachte, dass "action" statt "i" verwendet werden sollte.
-                on_off: 0
-            }
+        var message = {
+            case: "move_lift",
+            con_id: con_id,
+            client_id: client_id,
+            lift_id: lift_id,
+            direction: direction,
+            toggle: 0
         };
-        ws.send(JSON.stringify(obj));
+        ws.send(JSON.stringify(message));
         active_lifts.splice(active_lifts.indexOf(lift_id), 1);
         return;
     }
@@ -77,10 +76,6 @@ function liftStatusChange(lifts_new) {
     }
     lifts = lifts_new;
     lifts = JSON.parse(JSON.stringify(lifts));
-    console.log(lifts)
-    // Sort lifts by id
-    //Object.values(lifts).sort((a,b) => a.count - b.count)
-    console.log("Sorted lifts:", lifts)
     for (var con_id in lifts) {
         for (var i in lifts[con_id]) {
             var lift_div = document.createElement("div");
@@ -135,26 +130,28 @@ function emergencyStop() {
 // Message Handling
 ws.onmessage = function(event) {
     var data = JSON.parse(event.data);
-    if (data.message === "moved_lift") {
-        lift_id = data.lift.id;
-        action = data.lift.action;
-        on_off = data.lift.on_off;
-        if (on_off === "1") {
-            activateIndicator(lift_id, action);
+    console.log(data);
+    if (data.case === "lift_moved") {
+        if (data.toggle === 1) {
+            activateIndicator(data.lift_id, data.direction);
             return;
-        } else if (on_off === "0") {
-            deactivateIndicator(lift_id, action);
+        } else if (data.toggle === 0) {
+            deactivateIndicator(data.lift_id, data.direction);
             return;
         }
         console.log("error, got no on or off", event)
         return;
-    } else if (data.message === "stop") {
-        console.log("EMERGENCY STOP")
-    } else if (data.message === "lift_status") {
+
+    } else if (data.case === "stop") {
+        alert("EMERGENCY STOP")
+
+    } else if (data.case === "online_lifts") {
         liftStatusChange(data.lifts);
         return;
-    } else if (data.message === "info") {
+
+    } else if (data.case === "info") {
         return;
+
     } else {
         console.log("unhandled data:", event)
         return;

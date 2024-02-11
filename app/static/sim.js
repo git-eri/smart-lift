@@ -92,11 +92,11 @@ ws.onmessage = function(event) {
                 status: 0
             }
         }
-        if (on_off === "1") {
+        if (on_off === 1) {
             ws.send(JSON.stringify(obj))
             activateIndicator(lift_id, action);
             return;
-        } else if (on_off === "0") {
+        } else if (on_off === 0) {
             ws.send(JSON.stringify(obj))
             deactivateIndicator(lift_id, action);
             return;
