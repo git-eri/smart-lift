@@ -4,6 +4,7 @@ var client_id = "cli" + Date.now();
 
 var ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/${client_id}`);
 
+
 // Lifts
 function startLift(con_id, lift_id, direction) {
     active_lifts.push(lift_id);

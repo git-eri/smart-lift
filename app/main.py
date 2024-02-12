@@ -4,7 +4,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from . import logger, app, cm, online_lifts, client, controller
+from . import client, controller, logger, app, cm, lm
 
 Instrumentator().instrument(app, metric_namespace='smartlift').expose(app)
 
@@ -41,11 +41,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 
     except WebSocketDisconnect:
         await cm.disconnect(client_id, websocket)
-        if client_id.startswith("con") and client_id not in online_lifts:
-            message = {}
-            message['case'] = 'online_lifts'
-            message['lifts'] = online_lifts
-            await cm.broadcast_clients(json.dumps(message))
+        if client_id.startswith("con") and client_id not in lm.online_lifts:
+            await lm.send_online_lifts(broadcast=True)
             logger.info("Controller %s left", client_id)
         elif client_id.startswith("cli"):
             message = {}

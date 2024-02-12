@@ -13,7 +13,6 @@ const uint8_t stcpPin = 12;   // GPIO12 	74x595 RCLK/STCP
 const uint8_t shcpPin = 13;   // GPIO13 	74x595 SRCLK/SHCP
 const uint8_t serPin = 14;    // GPIO14 	74x595 SER/DS
 const uint8_t oePin = 5;      // GPIO05 	74x595 OE/output enable active low
-uint8_t active_net = 0;
 
 void(* resetFunc) (void) = 0;
 
@@ -38,11 +37,11 @@ void hc595Write(uint8_t pin, uint8_t val) {
 
 // Function to get values from string
 String getValue(String data, char separator, int index) {
-	int found = 0;
-	int strIndex[] = {0, -1};
-	int maxIndex = data.length()-1;
-	for(int i=0; i<=maxIndex && found<=index; i++) {
-		if(data.charAt(i)==separator || i==maxIndex) {
+	uint8_t found = 0;
+	uint8_t strIndex[] = {0, -1};
+	uint8_t maxIndex = data.length()-1;
+	for(size_t i = 0; i <= maxIndex && found <= index; i++) {
+		if(data.charAt(i) == separator || i == maxIndex) {
 			found++;
 			strIndex[0] = strIndex[1]+1;
 			strIndex[1] = (i == maxIndex) ? i+1 : i;
@@ -75,7 +74,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 			// Build dictionary for server
 			StaticJsonDocument<700> about_me;
 			about_me["case"] = "hello";
-      JsonArray jlifts = about_me.createNestedArray("lifts");
+      		JsonArray jlifts = about_me.createNestedArray("lifts");
 			for (uint8_t i = lift_begin; i < lift_begin + lift_count; i++) {
 				jlifts.add(i);;
 			}
@@ -98,8 +97,8 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 
 			if (doc_in["case"] == "move_lift") {
 				// Handle lift actions
-        uint8_t lift_id = doc_in["lift_id"];
-        uint8_t direction = doc_in["direction"];
+        		uint8_t lift_id = doc_in["lift_id"];
+        		uint8_t direction = doc_in["direction"];
 				uint8_t value = lifts[lift_id - lift_begin][direction];
 				if (doc_in["toggle"] == 1) {
 					hc595Write(value, HIGH);
@@ -176,23 +175,20 @@ void setup() {
 	}
 
 	USE_SERIAL.begin(115200);
-	USE_SERIAL.println();
-	USE_SERIAL.println("I am active!");
 	USE_SERIAL.setDebugOutput(false);
+  USE_SERIAL.println();
+  USE_SERIAL.println("active");
 	USE_SERIAL.println();
 
 	// Search for known networks
-	int numberOfNetworks;
-  for(uint8_t i = 0; i < 3 || numberOfNetworks < 1; i++) {
-    numberOfNetworks = WiFi.scanNetworks();
-  }
-  if (numberOfNetworks < 1) {
-    USE_SERIAL.println("No Networks found. Resetting now ...");
-    delay(200);
-    resetFunc();
-  }
-	for (size_t j = 0; j < len(networks); ++j) {
-		for(int i =0; i < numberOfNetworks; i++){
+	uint8_t numberOfNetworks = 0;
+	for(uint8_t i = 0; i < 3 || numberOfNetworks < 1; i++) {
+		numberOfNetworks = WiFi.scanNetworks();
+	}
+	uint8_t active_net = NULL;
+	for (uint8_t j = 0; j < len(networks); j++) {
+		for(uint8_t i = 0; i < numberOfNetworks; ++i){
+      USE_SERIAL.println(WiFi.SSID(i));
 			if (networks[j][0] == WiFi.SSID(i)) {
 				USE_SERIAL.println("Connecting to Network: " + networks[j][0]);
 				active_net = j;
@@ -200,6 +196,11 @@ void setup() {
 			}
 		}
 	}
+  if (numberOfNetworks < 1 || active_net == NULL) {
+    USE_SERIAL.println("No Networks found. Resetting now ...");
+    delay(200);
+    resetFunc();
+  }
 
 	// Connect to wifi
 	WiFi.hostname(con_id.c_str());
@@ -232,8 +233,8 @@ void setup() {
 void loop() {
   webSocket.loop();
 
-  static int lastButtonState = HIGH;
-  int buttonState = digitalRead(buttonPin);
+  static uint8_t lastButtonState = HIGH;
+  uint8_t buttonState = digitalRead(buttonPin);
   if (digitalRead(buttonPin) != lastButtonState) {
     if (buttonState == HIGH) {
       USE_SERIAL.println("Test Error");
