@@ -1,7 +1,9 @@
 """Main application file"""
+import os
 import json
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect, Header, Response
 from fastapi.responses import FileResponse
+from packaging import version
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from . import client, controller, logger, app, cm, lm
@@ -50,3 +52,28 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             message['client_id'] = client_id
             await cm.broadcast_clients(json.dumps(message))
             logger.info("Client %s left", client_id)
+
+@app.get("/update/{con_id}")
+async def update(con_id: str, x_esp8266_version: str | None = Header(default=None)):
+    """Updates the controller with the latest data."""
+    # Get latest version on server
+    latest_version = None
+    device = None
+    for file in os.listdir('app/binaries'):
+        if file.endswith('.bin'):
+            device = file.split('-')[0]
+            if device == con_id:
+                latest_version = file.strip('.bin').strip(device).strip('-')
+                print(device, latest_version)
+    if latest_version is None:
+        return {"error": "No binaries found on server"}
+    if device is None:
+        return {"error": "No binaries found on server"}
+
+    # Check if the controller has the latest version
+    if version.parse(x_esp8266_version) < version.parse(latest_version):
+        # Send the latest version to the controller
+        logger.info("Sending updates to controller: %s, %s", con_id, latest_version)
+        return FileResponse("app/binaries/" + device + "-" + latest_version + ".bin")
+
+    return Response(status_code=304)

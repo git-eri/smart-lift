@@ -79,26 +79,22 @@ function deactivateIndicator(liftId, buttonId) {
 // Message Handling
 ws.onmessage = function(event) {
     var data = JSON.parse(event.data);
-    if (data.message === "lift") {
-        lift_id = data.lift.id;
-        action = data.lift.action;
-        on_off = data.lift.on_off;
+    if (data.message === "move_lift") {
         obj = {
-            message: "moved_lift",
+            message: "lift_moved",
             lift: {
-                id: lift_id,
-                action: action,
-                on_off: on_off,
-                status: 0
+                lift_id: data.lift.lift_id,
+                direction: data.lift.direction,
+                toggle: data.lift.toggle
             }
         }
         if (on_off === 1) {
             ws.send(JSON.stringify(obj))
-            activateIndicator(lift_id, action);
+            activateIndicator(lift_id, data.lift.direction);
             return;
         } else if (on_off === 0) {
             ws.send(JSON.stringify(obj))
-            deactivateIndicator(lift_id, action);
+            deactivateIndicator(lift_id, data.lift.direction);
             return;
         }
         console.log("error, got no on or off", event)

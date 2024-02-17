@@ -3,9 +3,12 @@
 #include <WebSocketsClient.h>
 #include <Hash.h>
 #include <ArduinoJson.h>
+#include <ESP8266httpUpdate.h>
 #include "settings.h"
+#define VERSION "0.01.01"
 #define USE_SERIAL Serial
 
+WiFiClient client;
 WebSocketsClient webSocket;
 
 const uint8_t buttonPin = 0; // a button 
@@ -18,6 +21,27 @@ void(* resetFunc) (void) = 0;
 
 // A function that accepts arrays of any type T and any length N, and returns the length N. 
 template <class T, size_t N> constexpr size_t len(const T(&)[N]) { return N; }
+
+bool update(String updateUrl, WiFiClient client){
+	USE_SERIAL.println(updateUrl);
+	t_httpUpdate_return ret;
+	ESPhttpUpdate.rebootOnUpdate(false);
+	ret=ESPhttpUpdate.update(client,updateUrl,VERSION);
+	USE_SERIAL.println(ret);
+	if(ret!=HTTP_UPDATE_NO_UPDATES){
+		if(ret==HTTP_UPDATE_OK){
+			USE_SERIAL.println("UPDATE SUCCEEDED");
+			return true;
+		} else {
+			if(ret==HTTP_UPDATE_FAILED){
+				USE_SERIAL.println("Update Failed");
+			}
+		}
+	} else {
+		USE_SERIAL.println("Already on latest version. Continuing...");
+	}
+	return false;
+}
 
 // 74HC595 shift register pins
 void hc595Write(uint8_t pin, uint8_t val) {
@@ -176,8 +200,8 @@ void setup() {
 
 	USE_SERIAL.begin(115200);
 	USE_SERIAL.setDebugOutput(false);
-  USE_SERIAL.println();
-  USE_SERIAL.println("active");
+	USE_SERIAL.println();
+	USE_SERIAL.println("active");
 	USE_SERIAL.println();
 
 	// Search for known networks
@@ -185,7 +209,7 @@ void setup() {
 	for(uint8_t i = 0; i < 3 || numberOfNetworks < 1; i++) {
 		numberOfNetworks = WiFi.scanNetworks();
 	}
-	uint8_t active_net = NULL;
+	int active_net = NULL;
 	for (uint8_t j = 0; j < len(networks); j++) {
 		for(uint8_t i = 0; i < numberOfNetworks; ++i){
       USE_SERIAL.println(WiFi.SSID(i));
@@ -196,7 +220,7 @@ void setup() {
 			}
 		}
 	}
-  if (numberOfNetworks < 1 || active_net == NULL) {
+  if (numberOfNetworks < 1 && active_net == NULL) {
     USE_SERIAL.println("No Networks found. Resetting now ...");
     delay(200);
     resetFunc();
@@ -219,6 +243,13 @@ void setup() {
 		delay(200);
 		resetFunc();
 	}
+  // Check for updates
+	if (update("http://" + networks[active_net][2] + ":" + networks[active_net][3].toInt() + "/update/" + con_id, client)) {
+		USE_SERIAL.println("Update successful. Resetting now...");
+		delay(200);
+		resetFunc();
+	}
+
 	USE_SERIAL.println("Connected to Wifi, Connecting to server " + networks[active_net][2] + ":" + networks[active_net][3].toInt() + "/ws/" + con_id);
 
 	// Try to connect to Websockets server
