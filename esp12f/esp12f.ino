@@ -8,7 +8,7 @@
 #define VERSION "0.01.01"
 #define USE_SERIAL Serial
 
-WiFiClient client;
+BearSSL::WiFiClientSecure client;
 WebSocketsClient webSocket;
 
 const uint8_t buttonPin = 0; // a button 
@@ -19,10 +19,34 @@ const uint8_t oePin = 5;      // GPIO05 	74x595 OE/output enable active low
 
 void(* resetFunc) (void) = 0;
 
-// A function that accepts arrays of any type T and any length N, and returns the length N. 
-template <class T, size_t N> constexpr size_t len(const T(&)[N]) { return N; }
+// Set time via NTP, as required for x.509 validation
+time_t setClock() {
+  configTime(2*3600, 0, "pool.ntp.org", "time.nist.gov");
+  USE_SERIAL.print("Waiting for NTP time sync: ");
+  time_t now = time(nullptr);
+  while (now < 8 * 3600 * 2) {
+    delay(500);
+    USE_SERIAL.print(".");
+    now = time(nullptr);
+  }
+  USE_SERIAL.println("");
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  USE_SERIAL.print("Current time: ");
+  USE_SERIAL.print(asctime(&timeinfo));
+  return now;
+}
 
-bool update(String updateUrl, WiFiClient client){
+bool update(String updateUrl, BearSSL::WiFiClientSecure client){
+  bool mfln = client.probeMaxFragmentLength(SERVER, PORT, 1024);  // server must be the same as in ESPhttpUpdate.update()
+  USE_SERIAL.printf("MFLN supported: %s\n", mfln ? "yes" : "no");
+  if (mfln) {
+    client.setBufferSizes(1024, 1024);
+  }
+  client.allowSelfSignedCerts();
+  BearSSL::X509List x509(SERVER_CERT);
+  client.setTrustAnchors(&x509);
+  setClock();
 	USE_SERIAL.println(updateUrl);
 	t_httpUpdate_return ret;
 	ESPhttpUpdate.rebootOnUpdate(false);
@@ -30,11 +54,11 @@ bool update(String updateUrl, WiFiClient client){
 	USE_SERIAL.println(ret);
 	if(ret!=HTTP_UPDATE_NO_UPDATES){
 		if(ret==HTTP_UPDATE_OK){
-			USE_SERIAL.println("UPDATE SUCCEEDED");
+			USE_SERIAL.println("Update succeeded!");
 			return true;
 		} else {
 			if(ret==HTTP_UPDATE_FAILED){
-				USE_SERIAL.println("Update Failed");
+				USE_SERIAL.println("UPDATE FAILED");
 			}
 		}
 	} else {
@@ -59,23 +83,7 @@ void hc595Write(uint8_t pin, uint8_t val) {
 	digitalWrite(stcpPin, HIGH);
 }
 
-// Function to get values from string
-String getValue(String data, char separator, int index) {
-	uint8_t found = 0;
-	uint8_t strIndex[] = {0, -1};
-	uint8_t maxIndex = data.length()-1;
-	for(size_t i = 0; i <= maxIndex && found <= index; i++) {
-		if(data.charAt(i) == separator || i == maxIndex) {
-			found++;
-			strIndex[0] = strIndex[1]+1;
-			strIndex[1] = (i == maxIndex) ? i+1 : i;
-		}
-	}
-	return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
-}
-
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
-
 	switch(type) {
 		case WStype_DISCONNECTED: {
 			USE_SERIAL.printf("Disconnected!\n");
@@ -199,37 +207,15 @@ void setup() {
 	}
 
 	USE_SERIAL.begin(115200);
-	USE_SERIAL.setDebugOutput(false);
+	USE_SERIAL.setDebugOutput(true);
 	USE_SERIAL.println();
 	USE_SERIAL.println("active");
 	USE_SERIAL.println();
 
-	// Search for known networks
-	uint8_t numberOfNetworks = 0;
-	for(uint8_t i = 0; i < 3 || numberOfNetworks < 1; i++) {
-		numberOfNetworks = WiFi.scanNetworks();
-	}
-	int active_net = NULL;
-	for (uint8_t j = 0; j < len(networks); j++) {
-		for(uint8_t i = 0; i < numberOfNetworks; ++i){
-      USE_SERIAL.println(WiFi.SSID(i));
-			if (networks[j][0] == WiFi.SSID(i)) {
-				USE_SERIAL.println("Connecting to Network: " + networks[j][0]);
-				active_net = j;
-				break;
-			}
-		}
-	}
-  if (numberOfNetworks < 1 && active_net == NULL) {
-    USE_SERIAL.println("No Networks found. Resetting now ...");
-    delay(200);
-    resetFunc();
-  }
-
 	// Connect to wifi
 	WiFi.hostname(con_id.c_str());
 	WiFi.mode(WIFI_STA);
-	WiFi.begin(networks[active_net][0], networks[active_net][1]);
+	WiFi.begin(SSID, PASSWORD);
 	// Wait some time to connect to wifi
 	for(uint8_t i = 0; i < 50 && WiFi.status() != WL_CONNECTED; i++) {
 		USE_SERIAL.print(".");
@@ -239,21 +225,23 @@ void setup() {
 
 	// Check if connected to wifi
 	if(WiFi.status() != WL_CONNECTED) {
-		USE_SERIAL.println("Could not connect to " + networks[active_net][0] +". Resetting now...");
+		USE_SERIAL.println("Could not connect to " + String(SSID) +". Resetting now...");
 		delay(200);
 		resetFunc();
 	}
   // Check for updates
-	if (update("http://" + networks[active_net][2] + ":" + networks[active_net][3].toInt() + "/update/" + con_id, client)) {
-		USE_SERIAL.println("Update successful. Resetting now...");
+	if (update("https://"+ String(SERVER) + ":" + String(PORT) + "/update/" + con_id, client)) {
+		USE_SERIAL.println("Resetting now...");
 		delay(200);
 		resetFunc();
 	}
 
-	USE_SERIAL.println("Connected to Wifi, Connecting to server " + networks[active_net][2] + ":" + networks[active_net][3].toInt() + "/ws/" + con_id);
+	USE_SERIAL.println("Connected to Wifi, Connecting to server " + SERVER + ":" + PORT + "/ws/" + con_id);
 
 	// Try to connect to Websockets server
-	webSocket.begin(networks[active_net][2], networks[active_net][3].toInt(), "/ws/" + con_id);
+	//webSocket.begin(networks[active_net][2], networks[active_net][3].toInt(), "/ws/" + con_id);
+  String uri = "/ws/" + con_id;
+  webSocket.beginSslWithCA(SERVER.c_str(), PORT, uri.c_str() , SERVER_CERT);
 
 	// event handler
 	webSocket.onEvent(webSocketEvent);

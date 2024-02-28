@@ -74,6 +74,6 @@ async def update(con_id: str, x_esp8266_version: str | None = Header(default=Non
     if version.parse(x_esp8266_version) < version.parse(latest_version):
         # Send the latest version to the controller
         logger.info("Sending updates to controller: %s, %s", con_id, latest_version)
-        return FileResponse("app/binaries/" + device + "-" + latest_version + ".bin")
+        return FileResponse("app/binaries/" + con_id + "-" + latest_version + ".bin")
 
     return Response(status_code=304)

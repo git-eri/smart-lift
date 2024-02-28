@@ -6,3 +6,5 @@ auth.json
 settings.h
 build
 *.bin
+*.key
+*.crt
