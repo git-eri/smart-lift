@@ -3,10 +3,13 @@ import os
 import json
 from fastapi import WebSocket, WebSocketDisconnect, Header, Response
 from fastapi.responses import FileResponse
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from packaging import version
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from . import client, controller, logger, app, cm, lm
+
+app.add_middleware(HTTPSRedirectMiddleware)
 
 Instrumentator().instrument(app, metric_namespace='smartlift').expose(app)
 
@@ -50,6 +53,9 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             message = {}
             message['case'] = 'client_disconnect'
             message['client_id'] = client_id
+            if client_id in lm.active_lifts:
+                await lm.e_stop()
+                logger.error("Client %s left while controlling lifts", client_id)
             await cm.broadcast_clients(json.dumps(message))
             logger.info("Client %s left", client_id)
 

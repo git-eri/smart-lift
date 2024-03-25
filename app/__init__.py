@@ -10,14 +10,14 @@ class LiftManager:
     def __init__(self):
         self.online_lifts = {}
         self.active_lifts = {}
-        with open('app/lift_info.json', encoding="utf8") as f:
-            self.lift_info = json.load(f)
+        with open('app/lift_info.json', encoding="utf8") as file:
+            self.lift_info = json.load(file)
 
     async def send_online_lifts(self, client_id="", broadcast=False):
         """Send the set of active lifts to the specified client."""
         message = {}
         message['case'] = 'online_lifts'
-        message['lifts'] = self.online_lifts
+        message['lifts'] = dict(sorted(self.online_lifts.items()))
         if broadcast and client_id == "":
             await cm.broadcast_clients(json.dumps(message))
         else:
@@ -25,6 +25,11 @@ class LiftManager:
 
     async def send_move_lift(self, data: dict):
         """Sends the command to the dedicated controller to move the lift"""
+        if data['toggle'] == 0:
+            self.active_lifts.pop(data['client_id'], None)
+        elif data['toggle'] == 1:
+            self.active_lifts[data['client_id']] = data['lift_id']
+        logger.debug("Active lifts: %s", self.active_lifts)
         await cm.send_personal_message(data['con_id'], json.dumps(data))
 
     async def send_lift_moved(self, data: dict):
@@ -44,6 +49,14 @@ class LiftManager:
                 self.online_lifts[con_id][lift]['name'] = f"Lift {int(lift) + 1}"
             logger.debug("Controller %s added lift %s", con_id, lift)
         await self.send_online_lifts(broadcast=True)
+
+    async def e_stop(self):
+        """Emergency Stop all lifts"""
+        message = {}
+        message['case'] = 'stop'
+        await cm.broadcast(json.dumps(message))
+        logger.info("Emergency stop sent")
+        self.active_lifts = {}
 
     async def change_name(self, lift_id, new_name):
         """Changing the Name of the Lift"""

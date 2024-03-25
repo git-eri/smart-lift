@@ -1,9 +1,51 @@
 var active_lifts = [];
 var lifts = [];
-var client_id = "cli" + Date.now();
+var client_id = "cli-" + Date.now();
+var ws;
 
-var ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/${client_id}`);
+function startup() {
+    ws = new WebSocket(`wss://${document.location.hostname}:8000/ws/${client_id}`);
+    ws.onopen = function (event) {
+        console.log("Connection established");
+    };
+    // Message Handling
+    ws.onmessage = function(event) {
+        data = JSON.parse(event.data);
+        console.log(data);
+        if (data.case === "lift_moved") {
+            if (data.toggle === 1) {
+                activateIndicator(data.lift_id, data.direction);
+                return;
+            } else if (data.toggle === 0) {
+                deactivateIndicator(data.lift_id, data.direction);
+                return;
+            }
+            console.log("error, got no on or off", event)
+            return;
 
+        } else if (data.case === "stop") {
+            alert("EMERGENCY STOP")
+
+        } else if (data.case === "online_lifts") {
+            liftStatusChange(data.lifts);
+            return;
+
+        } else if (data.case === "info") {
+            return;
+
+        } else {
+            console.log("unhandled data:", event)
+            return;
+        }
+        return;
+    }
+}
+
+function disconnect() {
+    ws.close();
+    console.log("Connection closed");
+    return;
+}
 
 // Lifts
 function startLift(con_id, lift_id, direction) {
@@ -40,7 +82,7 @@ function startLift(con_id, lift_id, direction) {
 
 function endLift(con_id, lift_id, direction) {
     if (active_lifts.includes(lift_id)) {
-        var message = {
+        message = {
             case: "move_lift",
             con_id: con_id,
             client_id: client_id,
@@ -56,19 +98,19 @@ function endLift(con_id, lift_id, direction) {
 
 // Indicators
 function activateIndicator(liftId, buttonId) {
-    var indicator = document.getElementById(`indicator${liftId}-${buttonId}`);
+    indicator = document.getElementById(`indicator${liftId}-${buttonId}`);
     indicator.classList.add('active');
     return;
 }
 
 function deactivateIndicator(liftId, buttonId) {
-    var indicator = document.getElementById(`indicator${liftId}-${buttonId}`);
+    indicator = document.getElementById(`indicator${liftId}-${buttonId}`);
     indicator.classList.remove('active');
     return;
 }
 
 function liftStatusChange(lifts_new) {
-    var lifts_div = document.getElementsByClassName("lifts")[0];
+    lifts_div = document.getElementsByClassName("lifts")[0];
     lifts_div.innerHTML = '';
     // Has the number of lifts changed?
     if (lifts === lifts_new) {
@@ -79,7 +121,7 @@ function liftStatusChange(lifts_new) {
     lifts = JSON.parse(JSON.stringify(lifts));
     for (var con_id in lifts) {
         for (var i in lifts[con_id]) {
-            var lift_div = document.createElement("div");
+            lift_div = document.createElement("div");
             lift_div.className = "lift";
             lifts_div.appendChild(lift_div);
             h1 = document.createElement("h1");
@@ -128,34 +170,46 @@ function emergencyStop() {
     return;
 }
 
-// Message Handling
-ws.onmessage = function(event) {
-    var data = JSON.parse(event.data);
-    console.log(data);
-    if (data.case === "lift_moved") {
-        if (data.toggle === 1) {
-            activateIndicator(data.lift_id, data.direction);
-            return;
-        } else if (data.toggle === 0) {
-            deactivateIndicator(data.lift_id, data.direction);
-            return;
-        }
-        console.log("error, got no on or off", event)
-        return;
-
-    } else if (data.case === "stop") {
-        alert("EMERGENCY STOP")
-
-    } else if (data.case === "online_lifts") {
-        liftStatusChange(data.lifts);
-        return;
-
-    } else if (data.case === "info") {
-        return;
-
-    } else {
-        console.log("unhandled data:", event)
-        return;
+(function() {
+    var hidden = "hidden";
+  
+    // Standards:
+    if (hidden in document)
+      document.addEventListener("visibilitychange", onchange);
+    else if ((hidden = "mozHidden") in document)
+      document.addEventListener("mozvisibilitychange", onchange);
+    else if ((hidden = "webkitHidden") in document)
+      document.addEventListener("webkitvisibilitychange", onchange);
+    else if ((hidden = "msHidden") in document)
+      document.addEventListener("msvisibilitychange", onchange);
+    // IE 9 and lower:
+    else if ("onfocusin" in document)
+      document.onfocusin = document.onfocusout = onchange;
+    // All others:
+    else
+      window.onpageshow = window.onpagehide
+      = window.onfocus = window.onblur = onchange;
+  
+    function onchange (evt) {
+      var v = "visible", h = "hidden",
+          evtMap = {
+            focus:v, focusin:v, pageshow:v, blur:h, focusout:h, pagehide:h
+          };
+  
+      evt = evt || window.event;
+      if (evt.type in evtMap)
+        if (evtMap[evt.type] === "visible")
+          startup()
+        else
+          disconnect()
+      else
+        if (this[hidden])
+          disconnect()
+        else
+          startup()
     }
-    return;
-}
+  
+    // set the initial state (but only if browser supports the Page Visibility API)
+    if( document[hidden] !== undefined )
+      onchange({type: document[hidden] ? "blur" : "focus"});
+  })();

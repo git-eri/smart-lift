@@ -38,7 +38,7 @@ time_t setClock() {
 }
 
 bool update(String updateUrl, BearSSL::WiFiClientSecure client){
-  bool mfln = client.probeMaxFragmentLength(SERVER, PORT, 1024);  // server must be the same as in ESPhttpUpdate.update()
+  bool mfln = client.probeMaxFragmentLength(SERVER, PORT, 1024);
   USE_SERIAL.printf("MFLN supported: %s\n", mfln ? "yes" : "no");
   if (mfln) {
     client.setBufferSizes(1024, 1024);

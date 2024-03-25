@@ -13,7 +13,7 @@ async def handler(websocket: WebSocket, con_id: str):
         except json.JSONDecodeError:
             logger.error("Controller %s sent invalid data: %s", con_id, data)
             continue
-        # logger.debug("Controller %s sent: %s", con_id, data)
+        logger.debug("Controller %s sent: %s", con_id, data)
 
         if data['case'] == 'hello':
             # Hello message
