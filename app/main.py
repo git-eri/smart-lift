@@ -64,16 +64,11 @@ async def update(con_id: str, x_esp8266_version: str | None = Header(default=Non
     """Updates the controller with the latest data."""
     # Get latest version on server
     latest_version = None
-    device = None
     for file in os.listdir('app/binaries'):
         if file.endswith('.bin'):
-            device = file.split('-')[0]
-            if device == con_id:
-                latest_version = file.strip('.bin').strip(device).strip('-')
-                print(device, latest_version)
+            latest_version = file.strip('.bin')
+            print(latest_version)
     if latest_version is None:
-        return {"error": "No binaries found on server"}
-    if device is None:
         return {"error": "No binaries found on server"}
 
     # Check if the controller has the latest version

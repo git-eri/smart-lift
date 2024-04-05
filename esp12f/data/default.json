@@ -1,0 +1,8 @@
+{
+    "con_id": "con1",
+    "lift_begin": 0,
+    "ssid": "<ssid>",
+    "password": "<wifi password>",
+    "server": "<server adress>",
+    "port": 8000
+}

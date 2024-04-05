@@ -1,70 +1,123 @@
+#define VERSION "0.01.01"
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <WebSocketsClient.h>
 #include <Hash.h>
 #include <ArduinoJson.h>
 #include <ESP8266httpUpdate.h>
-#include "settings.h"
-#define VERSION "0.01.01"
-#define USE_SERIAL Serial
+#include <LittleFS.h>
 
 BearSSL::WiFiClientSecure client;
 WebSocketsClient webSocket;
 
-const uint8_t buttonPin = 0; // a button 
-const uint8_t stcpPin = 12;   // GPIO12 	74x595 RCLK/STCP
-const uint8_t shcpPin = 13;   // GPIO13 	74x595 SRCLK/SHCP
-const uint8_t serPin = 14;    // GPIO14 	74x595 SER/DS
-const uint8_t oePin = 5;      // GPIO05 	74x595 OE/output enable active low
-
+// Reset function
 void(* resetFunc) (void) = 0;
 
-// Set time via NTP, as required for x.509 validation
-time_t setClock() {
-  configTime(2*3600, 0, "pool.ntp.org", "time.nist.gov");
-  USE_SERIAL.print("Waiting for NTP time sync: ");
-  time_t now = time(nullptr);
-  while (now < 8 * 3600 * 2) {
-    delay(500);
-    USE_SERIAL.print(".");
-    now = time(nullptr);
-  }
-  USE_SERIAL.println("");
-  struct tm timeinfo;
-  gmtime_r(&now, &timeinfo);
-  USE_SERIAL.print("Current time: ");
-  USE_SERIAL.print(asctime(&timeinfo));
-  return now;
+// Set pins for registers/relais
+const uint8_t buttonPin = 0;
+const uint8_t stcpPin = 12;
+const uint8_t shcpPin = 13;
+const uint8_t serPin = 14;
+const uint8_t oePin = 5;
+
+// Assign lift numbers to relais
+const uint8_t lift_count = 5;
+const uint8_t lifts[lift_count][3] = { {15,14,13},
+                                       {12,11,10},
+                                       {9,8,0},
+                                       {1,2,3},
+                                       {4,5,6}
+                                      };
+String con_id;
+String SSID;
+String PASSWORD;
+String SERVER;
+int lift_begin;
+int PORT;
+X509List *serverCert;
+
+// Get config file data
+bool loadConfig() {
+	File configFile = LittleFS.open("/config.json", "r");
+	if (!configFile) {
+		Serial.println("Failed to open config file");
+		return false;
+	}
+
+	JsonDocument doc;
+	auto error = deserializeJson(doc, configFile);
+	if (error) {
+		Serial.println("Failed to parse config file");
+		return false;
+	}
+
+	con_id = String(doc["con_id"]);
+	lift_begin = doc["lift_begin"];
+	SSID = String(doc["ssid"]);
+	PASSWORD = String(doc["password"]);
+	SERVER = String(doc["server"]);
+	PORT = doc["port"];
+
+	char *buffer = new char[4096];
+	File certFile = LittleFS.open("/server.crt", "r");
+	if (!certFile) {
+		Serial.println("Failed to open cert file");
+		return false;
+	}
+	certFile.readBytes(buffer, certFile.size());
+	certFile.close();
+	serverCert = new X509List(buffer);
+	delete buffer;
+  Serial.print(serverCert);
+
+	return true;
 }
 
-bool update(String updateUrl, BearSSL::WiFiClientSecure client){
-  bool mfln = client.probeMaxFragmentLength(SERVER, PORT, 1024);
-  USE_SERIAL.printf("MFLN supported: %s\n", mfln ? "yes" : "no");
-  if (mfln) {
-    client.setBufferSizes(1024, 1024);
-  }
-  client.allowSelfSignedCerts();
-  BearSSL::X509List x509(SERVER_CERT);
-  client.setTrustAnchors(&x509);
-  setClock();
-	USE_SERIAL.println(updateUrl);
-	t_httpUpdate_return ret;
-	ESPhttpUpdate.rebootOnUpdate(false);
-	ret=ESPhttpUpdate.update(client,updateUrl,VERSION);
-	USE_SERIAL.println(ret);
-	if(ret!=HTTP_UPDATE_NO_UPDATES){
-		if(ret==HTTP_UPDATE_OK){
-			USE_SERIAL.println("Update succeeded!");
-			return true;
-		} else {
-			if(ret==HTTP_UPDATE_FAILED){
-				USE_SERIAL.println("UPDATE FAILED");
-			}
-		}
-	} else {
-		USE_SERIAL.println("Already on latest version. Continuing...");
+time_t setClock() {
+	configTime(2*3600, 0, "pool.ntp.org", "time.nist.gov");
+	Serial.print("Waiting for NTP time sync: ");
+	time_t now = time(nullptr);
+	while (now < 8 * 3600 * 2) {
+		delay(500);
+		Serial.print(".");
+		now = time(nullptr);
 	}
-	return false;
+	Serial.println("");
+	struct tm timeinfo;
+	gmtime_r(&now, &timeinfo);
+	Serial.print("Current time: ");
+	Serial.print(asctime(&timeinfo));
+	return now;
+}
+
+// Update function
+bool update(String updateUrl, BearSSL::WiFiClientSecure client){
+	bool mfln = client.probeMaxFragmentLength(SERVER, PORT, 1024);
+	Serial.printf("MFLN supported: %s\n", mfln ? "yes" : "no");
+	if (mfln) {
+		client.setBufferSizes(1024, 1024);
+	}
+	client.allowSelfSignedCerts();
+	client.setTrustAnchors(serverCert);
+	setClock();
+		Serial.println(updateUrl);
+		t_httpUpdate_return ret;
+		ESPhttpUpdate.rebootOnUpdate(false);
+		ret=ESPhttpUpdate.update(client,updateUrl,VERSION);
+		Serial.println(ret);
+		if(ret!=HTTP_UPDATE_NO_UPDATES){
+			if(ret==HTTP_UPDATE_OK){
+				Serial.println("Update succeeded!");
+				return true;
+			} else {
+				if(ret==HTTP_UPDATE_FAILED){
+					Serial.println("UPDATE FAILED");
+				}
+			}
+		} else {
+			Serial.println("Already on latest version. Continuing...");
+		}
+		return false;
 }
 
 // 74HC595 shift register pins
@@ -86,15 +139,15 @@ void hc595Write(uint8_t pin, uint8_t val) {
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 	switch(type) {
 		case WStype_DISCONNECTED: {
-			USE_SERIAL.printf("Disconnected!\n");
+			Serial.printf("Disconnected!\n");
 			for (uint8_t i = 0; i < 16; i++) {
 				hc595Write(i, LOW);
 			}
-			USE_SERIAL.printf("Cause:");
+			Serial.printf("Cause:");
 			if(WiFi.status() != WL_CONNECTED) {
-				USE_SERIAL.println("Wifi got disconnected! Resetting now...");
+				Serial.println("Wifi got disconnected! Resetting now...");
 			} else {
-				USE_SERIAL.println("Server not available! Resetting now...");
+				Serial.println("Server not available! Resetting now...");
 			}
 			delay(200);
 			resetFunc();
@@ -102,7 +155,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 			break;
 
 		case WStype_CONNECTED: {
-			USE_SERIAL.printf("Connected to url: %s\n", payload);
+			Serial.printf("Connected to url: %s\n", payload);
 			// Build dictionary for server
 			StaticJsonDocument<700> about_me;
 			about_me["case"] = "hello";
@@ -112,18 +165,18 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 			}
 			String about_me_str;
 			serializeJson(about_me, about_me_str);
-			USE_SERIAL.printf("Sending: %s\n", about_me_str);
+			Serial.printf("Sending: %s\n", about_me_str);
 			webSocket.sendTXT(about_me_str);
 		}
 			break;
 
 		case WStype_TEXT: {
-			//USE_SERIAL.printf("[WSc] get text: %s\n", payload);
+			//Serial.printf("[WSc] get text: %s\n", payload);
 			StaticJsonDocument<1024> doc_in;
 			DeserializationError error = deserializeJson(doc_in, payload);
 			if (error) {
-				USE_SERIAL.print(F("deserialize incoming message failed: "));
-				USE_SERIAL.println(error.f_str());
+				Serial.print(F("deserialize incoming message failed: "));
+				Serial.println(error.f_str());
 				return;
 			}
 
@@ -148,7 +201,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 				return;
 			} else if (doc_in["case"] == "stop") {
 				// Handle Emergency Stop
-				USE_SERIAL.println("EMERGENCY STOP");
+				Serial.println("EMERGENCY STOP");
 				for (uint8_t i = 0; i < 16; i++) {
 					hc595Write(i, LOW);
 				}
@@ -161,11 +214,11 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 				return;
 			} else if (doc_in["case"] == "info") {
 				// Handle messages from server
-				USE_SERIAL.printf("Message: %s\n", payload);
+				Serial.printf("Message: %s\n", payload);
 				return;
 			} else {
 				// Handle other bullshit that happens
-				USE_SERIAL.printf("Unhandled Event: %s\n", payload);
+				Serial.printf("Unhandled Event: %s\n", payload);
 				StaticJsonDocument<128> doc_out;
 				doc_out["case"] = "error";
 				doc_out["type"] = "Unhandled Event";
@@ -179,16 +232,16 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 			break;
 
 		case WStype_BIN:
-			USE_SERIAL.printf("get binary length: %u\n", length);
+			Serial.printf("get binary length: %u\n", length);
 			hexdump(payload, length);
 			break;
 
         case WStype_PING:
-            //USE_SERIAL.printf("[WSc] get ping\n");
+            //Serial.printf("[WSc] get ping\n");
             break;
 
         case WStype_PONG:
-            //USE_SERIAL.printf("[WSc] get pong\n");
+            //Serial.printf("[WSc] get pong\n");
             break;
     }
 }
@@ -206,11 +259,25 @@ void setup() {
 		hc595Write(i, LOW);
 	}
 
-	USE_SERIAL.begin(115200);
-	USE_SERIAL.setDebugOutput(true);
-	USE_SERIAL.println();
-	USE_SERIAL.println("active");
-	USE_SERIAL.println();
+	Serial.begin(115200);
+	Serial.setDebugOutput(true);
+	Serial.println();
+	Serial.println("active");
+	Serial.println();
+
+  	// Get data from filesystem
+  	Serial.println("Mounting FS...");
+
+  	if (!LittleFS.begin()) {
+    	Serial.println("Failed to mount file system");
+    	return;
+  	}
+
+  	if (!loadConfig()) {
+    	Serial.println("Failed to load config");
+  	} else {
+    	Serial.println("Config loaded");
+  	}
 
 	// Connect to wifi
 	WiFi.hostname(con_id.c_str());
@@ -218,30 +285,30 @@ void setup() {
 	WiFi.begin(SSID, PASSWORD);
 	// Wait some time to connect to wifi
 	for(uint8_t i = 0; i < 50 && WiFi.status() != WL_CONNECTED; i++) {
-		USE_SERIAL.print(".");
+		Serial.print(".");
 		delay(200);
 	}
-	USE_SERIAL.println("");
+	Serial.println("");
 
 	// Check if connected to wifi
 	if(WiFi.status() != WL_CONNECTED) {
-		USE_SERIAL.println("Could not connect to " + String(SSID) +". Resetting now...");
+		Serial.println("Could not connect to " + String(SSID) +". Resetting now...");
 		delay(200);
 		resetFunc();
 	}
   // Check for updates
 	if (update("https://"+ String(SERVER) + ":" + String(PORT) + "/update/" + con_id, client)) {
-		USE_SERIAL.println("Resetting now...");
+		Serial.println("Resetting now...");
 		delay(200);
 		resetFunc();
 	}
 
-	USE_SERIAL.println("Connected to Wifi, Connecting to server " + SERVER + ":" + PORT + "/ws/" + con_id);
+	Serial.println("Connected to Wifi, Connecting to server " + SERVER + ":" + PORT + "/ws/" + con_id);
 
 	// Try to connect to Websockets server
 	//webSocket.begin(networks[active_net][2], networks[active_net][3].toInt(), "/ws/" + con_id);
-  String uri = "/ws/" + con_id;
-  webSocket.beginSslWithCA(SERVER.c_str(), PORT, uri.c_str() , SERVER_CERT);
+  	String uri = "/ws/" + con_id;
+	webSocket.beginSslWithCA(SERVER.c_str(), PORT, uri.c_str() , serverCert);
 
 	// event handler
 	webSocket.onEvent(webSocketEvent);
@@ -256,7 +323,7 @@ void loop() {
   uint8_t buttonState = digitalRead(buttonPin);
   if (digitalRead(buttonPin) != lastButtonState) {
     if (buttonState == HIGH) {
-      USE_SERIAL.println("Test Error");
+      Serial.println("Test Error");
       StaticJsonDocument<128> doc_out;
       doc_out["case"] = "error";
       doc_out["type"] = "Test Error";
