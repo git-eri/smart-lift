@@ -8,6 +8,7 @@
 #include <LittleFS.h>
 
 BearSSL::WiFiClientSecure client;
+BearSSL::X509List *serverCert;
 WebSocketsClient webSocket;
 
 // Reset function
@@ -34,7 +35,6 @@ String PASSWORD;
 String SERVER;
 int lift_begin;
 int PORT;
-X509List *serverCert;
 
 // Get config file data
 bool loadConfig() {
@@ -65,11 +65,10 @@ bool loadConfig() {
 		return false;
 	}
 	certFile.readBytes(buffer, certFile.size());
+  Serial.println(buffer);
 	certFile.close();
-	serverCert = new X509List(buffer);
+	serverCert = new BearSSL::X509List(buffer);
 	delete buffer;
-  Serial.print(serverCert);
-
 	return true;
 }
 
