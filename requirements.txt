@@ -4,3 +4,5 @@ pydantic
 uvicorn
 jinja2
 websockets
+prometheus-fastapi-instrumentator
+packaging

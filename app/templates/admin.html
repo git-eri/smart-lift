@@ -4,14 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="static/desktop.css">
-    <script src="static/code.js"></script>
+    <script src="static/client.js"></script>
+
+    <link rel="apple-touch-icon" sizes="180x180" href="static/favicons/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="static/favicons/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="static/favicons/favicon-16x16.png">
+    <link rel="manifest" href="static/favicons/site.webmanifest">
+    <link rel="mask-icon" href="static/favicons/safari-pinned-tab.svg" color="#5bbad5">
+    <link rel="shortcut icon" href="static/favicons/favicon.ico">
+    <meta name="msapplication-TileColor" content="#da532c">
+    <meta name="msapplication-config" content="static/favicons/browserconfig.xml">
+    <meta name="theme-color" content="#ffffff">
 </head>
 <body>
     <div class="menubar">
         <h2>Lift Control Admin Panel</h2>
         <button class="status" onclick="window.location.href='/status'">status</button>
-        <button class="logs" onclick="window.location.href='/logs'">Logs</button>
-        <!--estop sollte alles blocken und muss erst entsperrt werden-->
+        <button class="logs" onclick="window.location.href='/logs'">logs</button>
+        <button class="logs" onclick="window.location.href='/metrics'">metrics</button>
         <button class="e-stop" onclick="emergencyStop()">STOP</button>
     </div>
     <div class="lifts"></div>

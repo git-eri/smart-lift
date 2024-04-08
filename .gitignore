@@ -4,3 +4,8 @@ __pycache__
 *.log
 auth.json
 settings.h
+build
+*.bin
+*.key
+*.crt
+config.json

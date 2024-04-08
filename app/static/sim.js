@@ -1,40 +1,12 @@
 var client_id = Date.now();
-var ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/con-sim${client_id}`);
 var active_lifts = [];
 var lifts = []
 
-// Get the lift id range from uri
-var ids = document.location.href.split('#')[1].split('-')
-for (var i = parseInt(ids[0]); i <= parseInt(ids[1]); i++) {
-    lifts.push(i)
-}
-
-// Startup 
-function startup() {
-    if (ws.readyState === 3) {
-        ws = new WebSocket(`ws://${document.location.hostname}:8000/ws/con-sim${Date.now()}`);
-
-    }
-    startup_obj = {
-        message: "hello",
-        lifts: lifts
-    }
-    show_lifts()
-    ws.send(JSON.stringify(startup_obj))
-}
-
-// Shutdown
-function shutdown() {
-    lifts = []
-    show_lifts()
-    ws.close()
-}
-
 function show_lifts() {
-    var lifts_div = document.getElementsByClassName("lifts")[0];
+    lifts_div = document.getElementsByClassName("lifts")[0];
     lifts_div.innerHTML = '';
     for (var lift in lifts) {
-        var lift_div = document.createElement("div");
+        lift_div = document.createElement("div");
         lift_div.className = "lift";
         lifts_div.appendChild(lift_div);
         h1 = document.createElement("h1");
@@ -76,35 +48,59 @@ function deactivateIndicator(liftId, buttonId) {
     return;
 }
 
-// Message Handling
-ws.onmessage = function(event) {
-    var data = JSON.parse(event.data);
-    if (data.message === "lift") {
-        lift_id = data.lift.id;
-        action = data.lift.action;
-        on_off = data.lift.on_off;
-        obj = {
-            message: "moved_lift",
-            lift: {
-                id: lift_id,
-                action: action,
-                on_off: on_off,
-                status: 0
-            }
-        }
-        if (on_off === "1") {
-            ws.send(JSON.stringify(obj))
-            activateIndicator(lift_id, action);
-            return;
-        } else if (on_off === "0") {
-            ws.send(JSON.stringify(obj))
-            deactivateIndicator(lift_id, action);
-            return;
-        }
-        console.log("error, got no on or off", event)
-        return;
-    } else {
-        console.log("unhandled data:", event)
-        return;
+// Startup 
+function startup() {
+    ws = new WebSocket(`wss://${document.location.hostname}:8000/ws/con-sim${client_id}`);
+    // Get the lift id range from uri
+    var ids = document.location.href.split('#')[1].split('-')
+    for (var i = parseInt(ids[0]); i <= parseInt(ids[1]); i++) {
+        lifts.push(i)
     }
+
+    startup_obj = {
+        case: "hello",
+        lifts: lifts
+    }
+    console.log("Startup", startup_obj)
+    show_lifts()
+    ws.addEventListener("open", (ev) => {
+        ws.send(JSON.stringify(startup_obj))
+    });
+    
+
+    // Message Handling
+    ws.onmessage = function(event) {
+        var data = JSON.parse(event.data);
+        if (data.case === "move_lift") {
+            obj = {
+                case: "lift_moved",
+                lift_id: data.lift_id,
+                direction: data.direction,
+                toggle: data.toggle
+            }
+            if (data.toggle === 1) {
+                ws.send(JSON.stringify(obj))
+                activateIndicator(data.lift_id, data.direction);
+                return;
+            } else if (data.toggle === 0) {
+                ws.send(JSON.stringify(obj))
+                deactivateIndicator(data.lift_id, data.direction);
+                return;
+            }
+            console.log("error, got no on or off", event)
+            return;
+        } else if (data.case === "stop") {
+            console.log("Emergency stop")
+        } else {
+            console.log("unhandled data:", event)
+            return;
+        }
+    }
+}
+
+// Shutdown
+function shutdown() {
+    lifts = []
+    show_lifts()
+    ws.close()
 }
