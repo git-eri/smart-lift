@@ -64,6 +64,7 @@ $ openssl req -x509 -nodes -days 730 -newkey rsa:2048 -keyout server.key -out se
 Testing with https updates
 ```bash
 $ uvicorn app.main:app --host=0.0.0.0 --port=8000 --log-config=app/log_conf.yml --ssl-keyfile='app/certs/server.key' --ssl-certfile='app/certs/server.crt'
+```
 
 Consider using the ```--reload``` flag for hot reloading with uvicorn.
 
