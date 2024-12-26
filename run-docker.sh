@@ -1,6 +1,4 @@
 #!/bin/bash
-docker system prune -f
-
 # Compile esp binary file
 echo "Compiling ESP binary file"
 arduino-cli compile -e --fqbn esp8266:esp8266:nodemcuv2 esp12f

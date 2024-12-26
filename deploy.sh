@@ -1,6 +1,4 @@
 #!/bin/bash
-docker system prune -f
-
 # Building image
 echo "Building Image"
 docker build --rm -f Dockerfile --progress=plain -t smart-lift:latest .
