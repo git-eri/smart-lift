@@ -21,60 +21,80 @@ My lifts came with an annoying keyswitch with bad placement. I removed them all,
 This setup is just tested for that specific [relais board](#relaisboard--layout) but the settings are easily adaptable to interface with boards with more or less relais.
 
 ## Getting Started
-- Clone the repository and install all dependencies (Docker, [Arduino librarys](#dependencies)). 
-```bash
-$ git clone https://github.com/git-eri/smart-lift.git
+
+### arduino-cli
+Install the arduino-cli from the [official website](https://arduino.github.io/arduino-cli/installation/).
+
+Initialize the arduino-cli using ```arduino-cli config init```
+
+Modify the ~/.arduino15/arduino-cli.yaml according to this example:
+```yaml
+library:
+    enable_unsafe_install: true
+board_manager:
+  additional_urls:
+    - https://arduino.esp8266.com/stable/package_esp8266com_index.json
 ```
-- Copy the [defaults.h](esp12f/defaults.h) and rename the file to settings.h. Edit the [settings.h](#settingsh) to fit your needs.
-- Programm your controller board(s) with the sketch [esp12f.ino](esp12f/esp12f.ino) using your own settings.
-- Run the [deploy.sh](deploy.sh) script
+
+Install the ESP8266 board and the necessary libraries:
 ```bash
-$ cd smart-lift
-$ ./deploy.sh
+arduino-cli core install esp8266:esp8266
+arduino-cli lib install ArduinoJson
+arduino-cli lib install --git-url https://github.com/Links2004/arduinoWebSockets
+```
+
+### Clone the repository:
+```bash
+git clone https://github.com/git-eri/smart-lift.git
+```
+
+Build the binaries and create certificates with:
+```bash
+./init.sh
+```
+
+### Programm the Boards
+- Copy the [defaults.json](esp12f/data/default.json) and rename the file to [config.json](#configjson). Edit the file to fit your needs.
+
+#### Dependencies
+
+- [Arduino IDE](https://www.arduino.cc/en/software)
+- ESP8266 board manager
+- [ArduinoJson](https://arduinojson.org/)
+- [WebSockets](https://github.com/Links2004/arduinoWebSockets)
+- [LittleFS](https://github.com/earlephilhower/arduino-littlefs-upload)
+
+#### Build & Upload
+
+Using the [ESP8266 board manager](https://arduino-esp8266.readthedocs.io/en/latest/installing.html), install the ESP8266 board. Then install the ArduinoJson and WebSockets librarys. Using the NodeMCU 1.0 (ESP-12E) board, upload the sketch [esp12f.ino](esp12f/esp12f.ino) to your controller.
+
+With the sketch uploaded, you can upload the data folder to the LittleFS of the controller. This can be done using the [LittleFS uploader](https://github.com/earlephilhower/arduino-littlefs-upload). With the plugin installed in the Arduino IDE, you can upload the data folder to the controller using `[Ctrl]` + `[Shift]` + `[P]`, then "`Upload LittleFS to Pico/ESP8266/ESP32`"
+
+
+### Finally, build and run the docker container:
+```bash
+docker compose up --build
 ```
 - The docker container should be up and running. Now you can turn on your programmed controllers and access the interface in your browser on port ```8000```. You should see the lifts being addded to the interface as the controllers connect to the server.
 - If you reached this step, you may now figure out how to interface with your lift. My lift was controlled using a key switch which i just replaced with the box shown above and connected everything up. You could also use one controller with at least 3 relais for every lift.
 
-### Docker Compose
-If you want to use a complete stack with grafana and prometheus for monitoring then just use ```docker compose up --build``` to start the stack.
 
-## Development
+## Modifications
 
-### What you need
+### config.json
 
-- Docker
-- Python 3.10
-- Any Relais Board based on ESP8266
-
-Linting before commit
-```bash
-$ pylint app
+```json
+{
+    "con_id": "con1",
+    "lift_begin": 0,
+    "ssid": "<ssid>",
+    "password": "<wifi password>",
+    "server": "<server adress>",
+    "port": 8000
+}
 ```
 
-### Server
-The server handles the communication between the controllers and the clients.
-
-Generating Certificates for SSL
-```bash
-$ openssl req -x509 -nodes -days 730 -newkey rsa:2048 -keyout server.key -out server.crt  -subj "/CN=update.example.com"
-```
-
-#### Development (Local - uvicorn)
-
-Testing with https updates
-```bash
-$ uvicorn app.main:app --host=0.0.0.0 --port=8000 --log-config=app/log_conf.yml --ssl-keyfile='app/certs/server.key' --ssl-certfile='app/certs/server.crt'
-```
-
-Consider using the ```--reload``` flag for hot reloading with uvicorn.
-
-#### Development (Docker)
-
-```bash
-$ ./run-docker.sh
-```
-
-#### lift_info.json
+### lift_info.json
 
 This file is used by the frontend so you can name your lifts. Change this file accordingly to your setup.
 
@@ -93,26 +113,14 @@ This file is used by the frontend so you can name your lifts. Change this file a
 }
 ```
 
+
+## Development
+
 ### Controller (ESP8266)
 
 #### Relaisboard & Layout
 
 <img src="media/relais_board.png" height="200">
-
-#### Dependencies
-
-- [Arduino IDE](https://www.arduino.cc/en/software)
-- ESP8266 (https://dl.espressif.com/dl/package_esp32_index.json)
-- [ArduinoJson](https://arduinojson.org/)
-- [WebSockets](https://github.com/Links2004/arduinoWebSockets)
-
-### Build & Upload
-
-Using the [ESP8266 board manager](https://arduino-esp8266.readthedocs.io/en/latest/installing.html), install the ESP8266 board. Then install the ArduinoJson and WebSockets librarys. Using the NodeMCU 1.0 (ESP-12E) board, upload the sketch [esp12f.ino](esp12f/esp12f.ino) to your controller.
-
-#### settings.h
-
-Rename the [defaults.h](esp12f/defaults.h) to settings.h and edit the file to fit your needs.
 
 
 ### Controller Simulator

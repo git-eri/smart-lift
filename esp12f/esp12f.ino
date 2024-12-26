@@ -65,7 +65,7 @@ bool loadConfig() {
 		return false;
 	}
 	certFile.readBytes(buffer, certFile.size());
-  Serial.println(buffer);
+  // Serial.println(buffer);
 	certFile.close();
 	serverCert = new BearSSL::X509List(buffer);
 	delete buffer;
