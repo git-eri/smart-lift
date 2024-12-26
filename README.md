@@ -116,6 +116,15 @@ This file is used by the frontend so you can name your lifts. Change this file a
 
 ## Development
 
+## Environment
+
+Setup the environment with:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
 ### Controller (ESP8266)
 
 #### Relaisboard & Layout

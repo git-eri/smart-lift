@@ -9,6 +9,25 @@ if [ ! -d ./binaries ]; then
     mkdir -p ./binaries;
 fi
 
+# Check if certificate is installed
+if [ ! -f ./app/certs/server.crt ] || [ ! -f ./app/certs/server.key ]; then
+    echo "Certificates not found"
+    openssl req -x509 -nodes -days 730 -newkey rsa:2048 -keyout ./certs/server.key -out ./certs/server.crt -subj "/C=/ST=/L=/O=/CN=$ip" -addext "subjectAltName = DNS:smart-lift, DNS:$ip"
+    if [ $? -ne 0 ]; then
+        echo "Failed to generate certificates"
+        exit
+    fi
+    echo "Certificates generated"
+    cp -rf ./certs/server.crt ./esp12f/data/server.crt
+else
+    echo "Certificates found"
+fi
+
+# Copy certificates to esp12f
+if [ ! -f ./esp12f/data/server.crt ]; then
+    cp -rf ./certs/server.crt ./esp12f/data/server.crt
+fi
+
 # Check if the arduino-cli is installed
 if ! command -v arduino-cli &> /dev/null
 then
@@ -29,22 +48,3 @@ fi
 cp -f ./esp12f/build/esp8266.esp8266.nodemcuv2/esp12f.ino.bin ./binaries/esp12f.ino.bin
 version=$(grep '#define VERSION' esp12f/esp12f.ino | cut -d' ' -f3 | tail -c +2 | head -c -3)
 mv ./binaries/esp12f.ino.bin ./binaries/$version.bin
-
-# Check if certificate is installed
-if [ ! -f ./app/certs/server.crt ] || [ ! -f ./app/certs/server.key ]; then
-    echo "Certificates not found"
-    openssl req -x509 -nodes -days 730 -newkey rsa:2048 -keyout ./certs/server.key -out ./certs/server.crt -subj "/C=/ST=/L=/O=/CN=$ip"
-    if [ $? -ne 0 ]; then
-        echo "Failed to generate certificates"
-        exit
-    fi
-    echo "Certificates generated"
-    cp -rf ./certs/server.crt ./esp12f/data/server.crt
-else
-    echo "Certificates found"
-fi
-
-# Copy certificates to esp12f
-if [ ! -f ./esp12f/data/server.crt ]; then
-    cp -rf ./certs/server.crt ./esp12f/data/server.crt
-fi
