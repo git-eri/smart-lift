@@ -20,6 +20,10 @@ async def handler(websocket: WebSocket, client_id: str):
         if data['case'] == 'hello':
             pass
 
+        elif data['case'] == 'stop':
+            # Lift moved
+            await lm.e_stop()
+
         elif data['case'] == 'move_lift':
             # Lift moved
             await lm.send_move_lift(data)
