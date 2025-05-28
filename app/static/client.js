@@ -4,7 +4,10 @@ var client_id = "cli-" + Date.now();
 var ws;
 
 function startup() {
-    ws = new WebSocket(`wss://${document.location.hostname}:8000/ws/${client_id}`);
+    if (ws && ws.readyState !== WebSocket.CLOSED) {
+        return; // Already connected
+    }
+    ws = new WebSocket(`wss://${document.location.host}/ws/${client_id}`);
     ws.onopen = function (event) {
         console.log("Connection established");
     };
@@ -51,7 +54,7 @@ function disconnect() {
 function startLift(con_id, lift_id, direction) {
     active_lifts.push(lift_id);
     if (active_lifts.length > 1) {
-        for (active_lift in active_lifts) {
+        for (const active_lift of active_lifts) {
             for (i = 0; i < 3; i++) {
                 var message = {
                     case: "move_lift",
@@ -125,7 +128,7 @@ function liftStatusChange(lifts_new) {
             lift_div.className = "lift";
             lifts_div.appendChild(lift_div);
             h1 = document.createElement("h1");
-            h1.innerHTML = lifts[con_id][i].name;
+            h1.textContent = lifts[con_id][i].name;
             lift_div.appendChild(h1);
             table = document.createElement("table");
             table.className = "table";

@@ -68,7 +68,7 @@ bool loadConfig() {
   // Serial.println(buffer);
 	certFile.close();
 	serverCert = new BearSSL::X509List(buffer);
-	delete buffer;
+	delete[] buffer;
 	return true;
 }
 
@@ -202,7 +202,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 				// Handle Emergency Stop
 				Serial.println("EMERGENCY STOP");
 				for (uint8_t i = 0; i < 16; i++) {
-					hc595Write(i, LOW);
+					hc595Write(i, HIGH); // Test (should be low) - Change this IMMEDIATELY
 				}
 				StaticJsonDocument<128> doc_out;
 				doc_out["case"] = "stop";
