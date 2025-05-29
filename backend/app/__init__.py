@@ -2,7 +2,6 @@
 import json
 import logging
 from fastapi import FastAPI, WebSocket
-from fastapi.staticfiles import StaticFiles
 
 class LiftManager:
     """Manages lifts and protocol messages"""
@@ -59,9 +58,27 @@ class LiftManager:
         self.active_lifts = {}
 
     async def change_name(self, lift_id, new_name):
-        """Changing the Name of the Lift"""
-        self.lift_info[str(lift_id)]['name'] = new_name
-        await self.send_online_lifts(broadcast=True)
+        """Changing the name of a lift and broadcasting to all"""
+        str_id = str(lift_id)
+
+        # Update persistente Daten
+        self.lift_info[str_id] = {"name": new_name}
+        with open('app/lift_info.json', 'w', encoding="utf8") as file:
+            json.dump(self.lift_info, file, indent=4)
+
+        # Update aktuelle Live-Daten
+        updated = False
+        for con_id, lifts in self.online_lifts.items():
+            for lift_key in lifts:
+                if str(lift_key) == str_id or lift_key == lift_id:
+                    lifts[lift_key]['name'] = new_name
+                    updated = True
+
+        if updated:
+            logger.info(f"Lift {lift_id} name changed to '{new_name}' in memory.")
+            await self.send_online_lifts(broadcast=True)
+        else:
+            logger.warning(f"Lift {lift_id} not found in memory; name will apply on next reconnect.")
 
 class ConnectionManager:
     """Manages active WebSocket connections."""
@@ -117,7 +134,6 @@ logger = logging.getLogger(__name__)
 logger.info("Starting smart-lift server...")
 
 app = FastAPI()
-app.mount('/static', StaticFiles(directory='app/static'), name='static')
 
 cm = ConnectionManager()
 lm = LiftManager()

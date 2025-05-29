@@ -4,28 +4,42 @@ import json
 from fastapi import WebSocket, WebSocketDisconnect, Header, Response
 from fastapi.responses import FileResponse
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 from packaging import version
 from prometheus_fastapi_instrumentator import Instrumentator
+from pydantic import BaseModel
 
 from . import client, controller, logger, app, cm, lm
 
-app.add_middleware(HTTPSRedirectMiddleware)
+# check if https is enabled
+if os.getenv('USE_SSL', 'false').lower() == 'true':
+    logger.info("HTTPS is enabled, redirecting HTTP to HTTPS")
+    app.add_middleware(HTTPSRedirectMiddleware)
+    
+else:
+    logger.info("HTTPS is not enabled, not redirecting HTTP to HTTPS")
+
+hostname = os.getenv('HOSTNAME', 'localhost').lower()
+frontend_port = os.getenv('FRONTEND_PORT', '8080')
+
+origins = [
+    f"http://{hostname}:{frontend_port}",
+    f"https://{hostname}:{frontend_port}"
+]
+
+app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+)
 
 Instrumentator().instrument(app, metric_namespace='smartlift').expose(app)
 
-@app.get("/", response_class=FileResponse)
-async def read_root():
-    """Serve the client-side mobile application."""
-    return FileResponse("app/templates/index.html")
-@app.get("/admin", response_class=FileResponse)
-async def read_admin():
-    """Serve the client-side admin application."""
-    return FileResponse("app/templates/admin.html")
-@app.get("/sim", response_class=FileResponse)
-async def read_sim():
-    """Serve the client-side sim application."""
-    return FileResponse("app/templates/sim.html")
-
+class RenameRequest(BaseModel):
+    lift_id: str
+    new_name: str
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
@@ -78,3 +92,13 @@ async def update(con_id: str, x_esp8266_version: str | None = Header(default=Non
         return FileResponse("app/binaries/" + con_id + "-" + latest_version + ".bin")
 
     return Response(status_code=304)
+
+@app.post("/admin/lift-rename")
+async def rename_lift_endpoint(payload: RenameRequest):
+    """Admin-Endpoint: Name eines Lifts ändern"""
+    await lm.change_name(payload.lift_id, payload.new_name)
+    return {
+        "status": "ok",
+        "lift_id": payload.lift_id,
+        "new_name": payload.new_name
+    }

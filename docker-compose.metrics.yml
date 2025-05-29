@@ -3,24 +3,31 @@ networks:
     driver: bridge
 
 volumes:
-  data: {}
-  prometheus_data: {}
+  grafana-data: {}
+  prometheus-data: {}
 
 services:
-  smart-lift:
+  frontend:
     build: 
-      context: .
-      dockerfile: Dockerfile
-    image: smart-lift
-    container_name: smart-lift
+      context: ./frontend
+    image: smart-lift-frontend
+    container_name: smart-lift-frontend
+    restart: unless-stopped
+    ports:
+      - 8080:80
+    environment:
+      - TZ=Europe/Berlin
+  backend:
+    build: 
+      context: ./backend
+    image: smart-lift-backend
+    container_name: smart-lift-backend
     restart: unless-stopped
     ports:
       - 8000:8000
     volumes:
       - ./certs:/code/app/certs
       - ./binaries:/code/app/binaries
-    networks:
-      - monitoring
     environment:
       - TZ=Europe/Berlin
 
@@ -31,7 +38,7 @@ services:
       - 3000:3000
     restart: unless-stopped
     volumes:
-      - data:/var/lib/grafana
+      - grafana-data:/var/lib/grafana
     networks:
       - monitoring
     environment:
@@ -44,7 +51,7 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - ./certs/server.crt:/etc/prometheus/server.crt
-      - prometheus_data:/prometheus
+      - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'

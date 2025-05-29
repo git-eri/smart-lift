@@ -4,5 +4,7 @@
     "ssid": "<ssid>",
     "password": "<wifi password>",
     "server": "<server adress>",
-    "port": 8000
+    "port": 8000,
+    "use_ssl": false,
+    "self_signed": false
 }
