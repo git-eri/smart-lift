@@ -1,0 +1,141 @@
+* {
+  box-sizing: border-box;
+  touch-action: manipulation;
+}
+
+body {
+  font-family: 'Segoe UI', Roboto, sans-serif;
+  margin: 0;
+  padding: 0;
+  background-color: #f4f6f8;
+  color: #333;
+  overflow: hidden;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: #121212;
+    color: #f4f4f4;
+  }
+  .menubar {
+    background-color: #1f1f1f;
+  }
+  .button {
+    background-color: #2d2d2d;
+    color: #f4f4f4;
+  }
+  .e-stop {
+    background-color: #a94442;
+  }
+  .indicator {
+    background-color: #444;
+  }
+  .active {
+    background-color: #2ecc71;
+  }
+}
+
+.menubar {
+  font-size: 2vh;
+  display: flex;
+  flex-direction: row;
+  padding: 0 1rem;
+  height: 10vh;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #3498db;
+  color: white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.lifts {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  flex-wrap: nowrap;
+  height: 90vh;
+  margin-top: 0;
+  scroll-behavior: smooth;
+}
+
+.lift {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 100%;
+  scroll-snap-align: start;
+  padding: 2rem;
+  box-sizing: border-box;
+}
+
+.buttons {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 1rem;
+  width: 100%;
+}
+
+.button {
+  flex: 1;
+  max-width: 300px;
+  background-color: #3498db;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 1rem 2rem;
+  font-size: 1.5rem;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s ease, background-color 0.3s;
+  text-align: center;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.button:hover {
+  background-color: #2980b9;
+}
+
+.button:active {
+  transform: scale(0.95);
+}
+
+.e-stop {
+  background-color: #e74c3c;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 0.5rem 1.5rem;
+  font-size: 1.2rem;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+}
+
+.e-stop:hover {
+  background-color: #c0392b;
+}
+
+.indicator {
+  width: 36px;
+  height: 36px;
+  background-color: #ccc;
+  border-radius: 50%;
+  transition: background-color 0.2s;
+  flex-shrink: 0;
+}
+
+.active {
+  background-color: #2ecc71;
+}
+
+.buttons > .indicator {
+  order: -1;
+}

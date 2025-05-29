@@ -1,16 +1,27 @@
 services:
-  smart-lift:
+  frontend:
     build: 
-      context: .
-      dockerfile: Dockerfile
-    image: smart-lift
-    container_name: smart-lift
+      context: ./frontend
+    image: smart-lift-frontend
+    container_name: smart-lift-frontend
     restart: unless-stopped
     ports:
-      - 8000:8000
+      - ${FRONTEND_PORT:-8080}:80
+    environment:
+      - TZ=Europe/Berlin
+  backend:
+    build: 
+      context: ./backend
+    image: smart-lift-backend
+    container_name: smart-lift-backend
+    restart: unless-stopped
+    ports:
+      - ${BACKEND_PORT:-8000}:8000
     volumes:
       - ./certs:/code/app/certs
       - ./binaries:/code/app/binaries
     environment:
       - TZ=Europe/Berlin
+
+  
       

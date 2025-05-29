@@ -19,6 +19,7 @@ const uint8_t serPin = 14;
 const uint8_t oePin = 5;
 
 // Lift Relais Mapping
+const uint8_t relais_count = 16;
 const uint8_t lift_count = 5;
 const uint8_t lifts[lift_count][3] = {
   {15,14,13}, {12,11,10}, {9,8,0}, {1,2,3}, {4,5,6}
@@ -132,7 +133,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
   switch (type) {
     case WStype_DISCONNECTED:
       Serial.println("WebSocket disconnected. Resetting...");
-      for (uint8_t i = 0; i < 16; i++) hc595Write(i, LOW);
+      for (uint8_t i = 0; i < relais_count; i++) hc595Write(i, LOW);
       delay(200);
       ESP.restart();
       break;
@@ -174,7 +175,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 
       else if (caseType == "stop") {
         Serial.println("EMERGENCY STOP triggered");
-        for (uint8_t i = 0; i < 16; i++) hc595Write(i, LOW);
+        for (uint8_t i = 0; i < relais_count; i++) hc595Write(i, HIGH);
         StaticJsonDocument<128> response;
         response["case"] = "stop";
         response["status"] = "0";
@@ -214,7 +215,7 @@ void setup() {
   pinMode(oePin, OUTPUT);
   digitalWrite(oePin, LOW);
 
-  for (uint8_t i = 0; i < 16; i++) hc595Write(i, LOW);
+  for (uint8_t i = 0; i < relais_count; i++) hc595Write(i, LOW);
 
   Serial.begin(115200);
   Serial.println("\nBooting...\n");
