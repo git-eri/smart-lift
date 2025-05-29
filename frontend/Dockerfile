@@ -1,5 +1,11 @@
 # build stage
 FROM node:lts-alpine AS build-stage
+
+ARG VITE_USE_SSL
+ARG VITE_BACKEND_PORT
+ENV VITE_USE_SSL=$VITE_USE_SSL
+ENV VITE_BACKEND_PORT=$VITE_BACKEND_PORT
+
 WORKDIR /app
 COPY package*.json ./
 RUN npm install

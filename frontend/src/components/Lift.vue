@@ -51,6 +51,9 @@ const emit = defineEmits(['start', 'end'])
 const editingLiftId = ref(null)
 const newName = ref('')
 
+const PROTOCOL = import.meta.env.VITE_USE_SSL === 'true' ? 'https' : 'http'
+const PORT = import.meta.env.VITE_BACKEND_PORT || '8000'
+
 function startEditing(lift) {
   editingLiftId.value = lift.id
   newName.value = lift.name
@@ -63,7 +66,7 @@ async function submitRename(lift) {
   }
 
   try {
-    const response = await fetch(`https://${location.hostname}:8000/admin/lift-rename`, {
+    const response = await fetch(`${PROTOCOL}://${location.hostname}:${PORT}/admin/lift-rename`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

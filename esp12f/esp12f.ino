@@ -1,4 +1,4 @@
-#define VERSION "0.01.01"
+#define VERSION "0.02.01"
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <WebSocketsClient.h>
@@ -31,6 +31,8 @@ String PASSWORD = "";
 String SERVER = "";
 int lift_begin = 0;
 int PORT = 0;
+bool USE_HTTPS = true;
+bool SELF_SIGNED = false;
 
 // Hilfsfunktion: JSON senden
 void sendMessage(const JsonDocument& doc) {
@@ -59,17 +61,21 @@ bool loadConfig() {
   PASSWORD = String(doc["password"] | "");
   SERVER = String(doc["server"] | "");
   PORT = doc["port"] | 443;
+  USE_HTTPS = doc["use_ssl"] | true;
+  SELF_SIGNED = doc["self_signed"] | false;
 
-  File certFile = LittleFS.open("/server.crt", "r");
-  if (!certFile) {
-    Serial.println("Failed to open cert file");
-    return false;
+  if (USE_HTTPS) {
+    File certFile = LittleFS.open("/server.crt", "r");
+    if (!certFile) {
+      Serial.println("Failed to open cert file");
+      return false;
+    }
+
+    String certStr;
+    certStr.reserve(2048);
+    certStr = certFile.readString();
+    serverCert = new BearSSL::X509List(certStr.c_str());
   }
-
-  String certStr;
-  certStr.reserve(2048);
-  certStr = certFile.readString();
-  serverCert = new BearSSL::X509List(certStr.c_str());
   return true;
 }
 
@@ -90,13 +96,18 @@ time_t setClock() {
 
 // Firmware-Update
 bool updateFirmware(String updateUrl, BearSSL::WiFiClientSecure& client) {
+  if (!USE_HTTPS) {
+    Serial.println("Skipping firmware update: HTTPS disabled.");
+    return false;
+  }
   bool mfln = client.probeMaxFragmentLength(SERVER, PORT, 1024);
   if (mfln) {
     client.setBufferSizes(1024, 1024);
   }
-
-  client.allowSelfSignedCerts();
-  client.setTrustAnchors(serverCert);
+  if (SELF_SIGNED) {
+    client.allowSelfSignedCerts();
+    client.setTrustAnchors(serverCert);
+  }
   setClock();
 
   Serial.println("Update URL: " + updateUrl);
@@ -254,7 +265,15 @@ void setup() {
   }
 
   String uri = "/ws/" + con_id;
-  webSocket.beginSslWithCA(SERVER.c_str(), PORT, uri.c_str(), serverCert);
+  if (USE_HTTPS) {
+    if (SELF_SIGNED) {
+      client.allowSelfSignedCerts();
+      client.setTrustAnchors(serverCert); // optional fallback
+    }
+    webSocket.beginSslWithCA(SERVER.c_str(), PORT, uri.c_str(), serverCert);
+  } else {
+    webSocket.begin(SERVER.c_str(), PORT, uri.c_str());
+  }
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(5000);
 }

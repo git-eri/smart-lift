@@ -11,14 +11,28 @@ from pydantic import BaseModel
 
 from . import client, controller, logger, app, cm, lm
 
-app.add_middleware(HTTPSRedirectMiddleware)
+# check if https is enabled
+if os.getenv('USE_SSL', 'false').lower() == 'true':
+    logger.info("HTTPS is enabled, redirecting HTTP to HTTPS")
+    app.add_middleware(HTTPSRedirectMiddleware)
+    
+else:
+    logger.info("HTTPS is not enabled, not redirecting HTTP to HTTPS")
+
+hostname = os.getenv('HOSTNAME', 'localhost').lower()
+frontend_port = os.getenv('FRONTEND_PORT', '8080')
+
+origins = [
+    f"http://{hostname}:{frontend_port}",
+    f"https://{hostname}:{frontend_port}"
+]
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:8080", "https://localhost:8080"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
 )
 
 Instrumentator().instrument(app, metric_namespace='smartlift').expose(app)
