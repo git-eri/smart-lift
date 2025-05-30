@@ -5,11 +5,15 @@ services:
       args:
         VITE_USE_SSL: ${USE_SSL:-false}
         VITE_BACKEND_PORT: ${BACKEND_PORT:-8000}
+        USE_SELF_SIGNED_CERT: ${USE_SELF_SIGNED_CERT:-false}
     image: smart-lift-frontend
     container_name: smart-lift-frontend
     restart: unless-stopped
     ports:
       - ${FRONTEND_PORT:-8080}:80
+      - ${FRONTEND_SSL_PORT:-8443}:443
+    volumes:
+      - ./certs:/etc/nginx/ssl:ro
     environment:
       TZ: Europe/Berlin
 

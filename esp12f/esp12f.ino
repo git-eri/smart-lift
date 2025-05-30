@@ -60,8 +60,8 @@ bool loadConfig() {
   SSID = String(doc["ssid"] | "");
   PASSWORD = String(doc["password"] | "");
   SERVER = String(doc["server"] | "");
-  PORT = doc["port"] | 443;
-  USE_HTTPS = doc["use_ssl"] | true;
+  PORT = doc["port"] | 0;
+  USE_HTTPS = doc["use_ssl"] | false;
   SELF_SIGNED = doc["self_signed"] | false;
 
   if (USE_HTTPS) {
@@ -273,6 +273,7 @@ void setup() {
     webSocket.beginSslWithCA(SERVER.c_str(), PORT, uri.c_str(), serverCert);
   } else {
     webSocket.begin(SERVER.c_str(), PORT, uri.c_str());
+    Serial.printf("Trying ws://%s:%d%s\n", SERVER.c_str(), PORT, uri.c_str());
   }
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(5000);
