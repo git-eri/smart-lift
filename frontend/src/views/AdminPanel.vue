@@ -42,6 +42,7 @@ const newName = ref('')
 // Define the protocol and port based on environment variables
 const PROTOCOL = import.meta.env.VITE_USE_SSL === 'true' ? 'https' : 'http'
 const PORT = import.meta.env.VITE_BACKEND_PORT || '8000'
+const HOSTNAME = import.meta.env.VITE_HOSTNAME?.trim() || location.hostname;
 
 const { send, onMessage, startup } = useWebSocket()
 
@@ -60,7 +61,7 @@ function selectLift(lift) {
 }
 
 async function submitRename() {
-  const response = await fetch(`${PROTOCOL}://${location.hostname}:${PORT}/admin/lift-rename`, {
+  const response = await fetch(`${PROTOCOL}://${HOSTNAME}/admin/lift-rename`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'

@@ -24,6 +24,8 @@ import { ref } from 'vue'
 
 const lifts = ref([])
 const client_id = Date.now()
+const WS_PROTOCOL = import.meta.env.VITE_USE_SSL === 'true' ? 'wss' : 'ws'
+const HOSTNAME = import.meta.env.VITE_HOSTNAME?.trim() || location.hostname;
 let ws
 
 function startup() {
@@ -32,7 +34,7 @@ function startup() {
     lifts.value.push(i)
   }
 
-  ws = new WebSocket(`wss://${location.hostname}:8000/ws/con-sim${client_id}`)
+  ws = new WebSocket(`${WS_PROTOCOL}://${HOSTNAME}/ws/${client_id}`)
   const hello = { case: 'hello', lifts: lifts.value }
 
   ws.onopen = () => ws.send(JSON.stringify(hello))

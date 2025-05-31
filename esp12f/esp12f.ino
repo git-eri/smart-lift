@@ -186,7 +186,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 
       else if (caseType == "stop") {
         Serial.println("EMERGENCY STOP triggered");
-        for (uint8_t i = 0; i < relais_count; i++) hc595Write(i, HIGH);
+        for (uint8_t i = 0; i < relais_count; i++) hc595Write(i, LOW);
         StaticJsonDocument<128> response;
         response["case"] = "stop";
         response["status"] = "0";

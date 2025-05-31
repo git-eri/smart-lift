@@ -7,11 +7,12 @@ let listeners = []
 // Lade Umgebungsvariablen aus Vite
 const BACKEND_PORT = import.meta.env.VITE_BACKEND_PORT || 8000
 const WS_PROTOCOL = import.meta.env.VITE_USE_SSL === 'true' ? 'wss' : 'ws'
+const HOSTNAME = import.meta.env.VITE_HOSTNAME?.trim() || location.hostname;
 
 function startup() {
   if (ws.value && ws.value.readyState !== WebSocket.CLOSED) return
 
-  const url = `${WS_PROTOCOL}://${location.hostname}:${BACKEND_PORT}/ws/${clientId}`
+  const url = `${WS_PROTOCOL}://${HOSTNAME}/ws/${clientId}`
   ws.value = new WebSocket(url)
 
   ws.value.onmessage = (event) => {

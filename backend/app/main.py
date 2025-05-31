@@ -15,7 +15,6 @@ from . import client, controller, logger, app, cm, lm
 if os.getenv('USE_SSL', 'false').lower() == 'true':
     logger.info("HTTPS is enabled, redirecting HTTP to HTTPS")
     app.add_middleware(HTTPSRedirectMiddleware)
-    
 else:
     logger.info("HTTPS is not enabled, not redirecting HTTP to HTTPS")
 

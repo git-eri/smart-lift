@@ -9,3 +9,4 @@ build
 *.key
 *.crt
 config.json
+acme.json

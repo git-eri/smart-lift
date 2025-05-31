@@ -1,10 +1,11 @@
 services:
   frontend:
-    build: 
+    build:
       context: ./frontend
       args:
         VITE_USE_SSL: ${USE_SSL:-false}
         VITE_BACKEND_PORT: ${BACKEND_PORT:-8000}
+        VITE_HOSTNAME: ${HOSTNAME:-localhost}
         USE_SELF_SIGNED_CERT: ${USE_SELF_SIGNED_CERT:-false}
     image: smart-lift-frontend
     container_name: smart-lift-frontend
@@ -18,7 +19,7 @@ services:
       TZ: Europe/Berlin
 
   backend:
-    build: 
+    build:
       context: ./backend
     image: smart-lift-backend
     container_name: smart-lift-backend
@@ -35,6 +36,38 @@ services:
       BACKEND_PORT: ${BACKEND_PORT:-8000}
       USE_SSL: ${USE_SSL:-false}
       USE_SELF_SIGNED_CERT: ${USE_SELF_SIGNED_CERT:-false}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.smart-lift.rule=Host(`${HOSTNAME:-localhost}`)
+      - traefik.http.routers.smart-lift.entrypoints=websecure
+      - traefik.http.routers.smart-lift.tls=true
+      - traefik.http.routers.smart-lift.tls.certresolver=cloudflare
+      - traefik.http.services.smart-lift.loadbalancer.server.scheme=https
+      - traefik.http.services.smart-lift.loadbalancer.server.port=${BACKEND_PORT:-8000}
+      - traefik.http.services.smart-lift.loadbalancer.serverstransport=smart-lift@file
 
-  
-      
+  traefik:
+    image: traefik:v3.3
+    container_name: traefik
+    command:
+      - --log.level=DEBUG
+      - --providers.file.directory=/etc/traefik/conf
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entryPoints.web.address=:80
+      - --entryPoints.websecure.address=:443
+      - --certificatesresolvers.cloudflare.acme.dnschallenge=true
+      - --certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare
+      - --certificatesresolvers.cloudflare.acme.dnschallenge.resolvers=1.1.1.1:53,1.0.0.1:53
+      - --certificatesresolvers.cloudflare.acme.email=${CF_EMAIL}
+      - --certificatesresolvers.cloudflare.acme.storage=/letsencrypt/acme.json
+    ports:
+      - 80:80
+      - 443:443
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+    volumes:
+      - ./traefik/letsencrypt:/letsencrypt
+      - ./traefik/conf:/etc/traefik/conf
+      - /var/run/docker.sock:/var/run/docker.sock:ro
