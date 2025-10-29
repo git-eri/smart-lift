@@ -1,4 +1,0 @@
-http:
-  serversTransports:
-    smart-lift:
-      insecureSkipVerify: true

@@ -1,4 +1,4 @@
-#define VERSION "0.02.01"
+#define VERSION "0.02.02"
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <WebSocketsClient.h>
@@ -258,13 +258,13 @@ void setup() {
     ESP.restart();
   }
 
-  if (updateFirmware("https://" + SERVER + ":" + String(PORT) + "/update/" + con_id, client)) {
+  if (updateFirmware("https://" + SERVER + ":" + String(PORT) + "/api/update/" + con_id, client)) {
     Serial.println("Updated. Restarting...");
     delay(200);
     ESP.restart();
   }
 
-  String uri = "/ws/" + con_id;
+  String uri = "/api/ws/" + con_id;
   if (USE_HTTPS) {
     if (SELF_SIGNED) {
       client.allowSelfSignedCerts();

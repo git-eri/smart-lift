@@ -133,7 +133,7 @@ class ConnectionManager:
 logger = logging.getLogger(__name__)
 logger.info("Starting smart-lift server...")
 
-app = FastAPI()
+app = FastAPI(root_path="/api")
 
 cm = ConnectionManager()
 lm = LiftManager()

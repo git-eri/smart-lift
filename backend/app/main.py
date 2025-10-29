@@ -11,32 +11,6 @@ from pydantic import BaseModel
 
 from . import client, controller, logger, app, cm, lm
 
-# check if https is enabled
-if os.getenv('USE_SSL', 'false').lower() == 'true':
-    logger.info("HTTPS is enabled, redirecting HTTP to HTTPS")
-    app.add_middleware(HTTPSRedirectMiddleware)
-else:
-    logger.info("HTTPS is not enabled, not redirecting HTTP to HTTPS")
-
-hostname = os.getenv('HOSTNAME', 'localhost').lower()
-frontend_port = os.getenv('FRONTEND_PORT', '8080')
-
-origins = [
-    f"http://{hostname}:{frontend_port}",
-    f"https://{hostname}",
-    f"https://smart-lift.pbs-it.de"
-]
-
-logger.info(f"Hostname: {hostname}")
-
-app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-)
-
 Instrumentator().instrument(app, metric_namespace='smartlift').expose(app)
 
 class RenameRequest(BaseModel):
