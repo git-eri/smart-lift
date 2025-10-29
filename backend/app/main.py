@@ -23,8 +23,11 @@ frontend_port = os.getenv('FRONTEND_PORT', '8080')
 
 origins = [
     f"http://{hostname}:{frontend_port}",
-    f"https://{hostname}:{frontend_port}"
+    f"https://{hostname}",
+    f"https://smart-lift.pbs-it.de"
 ]
+
+logger.info(f"Hostname: {hostname}")
 
 app.add_middleware(
         CORSMiddleware,
@@ -37,7 +40,7 @@ app.add_middleware(
 Instrumentator().instrument(app, metric_namespace='smartlift').expose(app)
 
 class RenameRequest(BaseModel):
-    lift_id: str
+    lift_id: int
     new_name: str
 
 @app.websocket("/ws/{client_id}")

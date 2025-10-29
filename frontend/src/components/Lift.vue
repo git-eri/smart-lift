@@ -52,7 +52,8 @@ const editingLiftId = ref(null)
 const newName = ref('')
 
 const PROTOCOL = import.meta.env.VITE_USE_SSL === 'true' ? 'https' : 'http'
-const PORT = import.meta.env.VITE_BACKEND_PORT || '8000'
+//const PORT = import.meta.env.VITE_BACKEND_PORT || '8000'
+const HOSTNAME = import.meta.env.VITE_HOSTNAME?.trim() || location.hostname;
 
 function startEditing(lift) {
   editingLiftId.value = lift.id
@@ -66,11 +67,11 @@ async function submitRename(lift) {
   }
 
   try {
-    const response = await fetch(`${PROTOCOL}://${location.hostname}:${PORT}/admin/lift-rename`, {
+    const response = await fetch(`${PROTOCOL}://${HOSTNAME}/admin/lift-rename`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        lift_id: lift.id.toString(),
+        lift_id: lift.id,
         new_name: newName.value.trim()
       })
     })
