@@ -1,36 +1,43 @@
-"""This module contains the controller class."""
+"""Controller (hardware) websocket handler.
+
+Accepts updates from controllers (con*), maintains lift discovery,
+forwards movement status, and power state changes.
+"""
+
 import json
 from fastapi import WebSocket
 
-from . import logger, lm
+from . import HelloMsg, LiftMovedMsg, PowerStateMsg, StopMsg, ErrorMsg, Case, logger, lm, parse_msg
 
-async def handler(websocket: WebSocket, con_id: str):
-    """Handle Controller events"""
+
+async def handler(websocket: WebSocket, con_id: str) -> None:
+    """Handle 'con*' connections."""
     while True:
-        data = await websocket.receive_text()
-        try:
-            data = json.loads(data)
-        except json.JSONDecodeError:
-            logger.error("Controller %s sent invalid data: %s", con_id, data)
-            continue
-        logger.debug("Controller %s sent: %s", con_id, data)
+        raw = await websocket.receive_text()
+        msg = parse_msg(raw)
+        logger.debug("Controller %s sent: %s", con_id, raw)
 
-        if data['case'] == 'hello':
-            # Hello message
-            await lm.recv_hello(con_id, data)
+        if isinstance(msg, ErrorMsg):
+            logger.error("Controller %s sent invalid data: %s", con_id, msg.detail)
+            continue
+
+        if isinstance(msg, HelloMsg):
+            await lm.recv_hello(con_id, msg)
             logger.info("Controller %s connected", con_id)
 
-        elif data['case'] == 'lift_moved':
-            # Lift moved
-            await lm.send_lift_moved(data)
+        elif isinstance(msg, PowerStateMsg):
+            await lm.update_power_state(con_id, int(msg.state))
 
-        elif data['case'] == 'stop':
-            # Emergency stop
+        elif isinstance(msg, LiftMovedMsg):
+            # Broadcast the raw payload exactly as sent by the controller.
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                obj = {"case": Case.LIFT_MOVED.value, "con_id": con_id}
+            await lm.send_lift_moved_raw(obj)
+
+        elif isinstance(msg, StopMsg):
             pass
 
-        elif data['case'] == 'error':
-            # Error
-            logger.error("Controller %s sent error: %s", con_id, data)
-
         else:
-            logger.error("Controller %s sent invalid data: %s", con_id, data)
+            logger.error("Controller %s sent unsupported case: %s", con_id, msg.case)

@@ -4,20 +4,26 @@ const ws = ref(null)
 const clientId = 'cli-' + Date.now()
 let listeners = []
 
-// Lade Umgebungsvariablen aus Vite
-const BACKEND_PORT = import.meta.env.VITE_BACKEND_PORT || 8000
-const WS_PROTOCOL = import.meta.env.VITE_USE_SSL === 'true' ? 'wss' : 'ws'
-const HOSTNAME = import.meta.env.VITE_HOSTNAME?.trim() || location.hostname;
+const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+const host = window.location.hostname
+const port = window.location.port ? `:${window.location.port}` : ''
+const url = `${protocol}://${host}${port}/api/ws/${clientId}`
+
+export const powerStates = ref({})
 
 function startup() {
   if (ws.value && ws.value.readyState !== WebSocket.CLOSED) return
 
-  const url = `${WS_PROTOCOL}://${HOSTNAME}/ws/${clientId}`
   ws.value = new WebSocket(url)
 
   ws.value.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data)
+      if (data.case === 'power_states' && data.states && typeof data.states === 'object') {
+        powerStates.value = { ...data.states }
+      } else if (data.case === 'power_state' && data.con_id) {
+        powerStates.value = { ...powerStates.value, [data.con_id]: Number(data.state) ? 1 : 0 }
+      }
       listeners.forEach((cb) => cb(data))
     } catch (e) {
       console.error('Invalid JSON:', event.data)

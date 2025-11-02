@@ -1,36 +1,41 @@
-"""This module contains the client class."""
-import json
+"""Client (frontend app) websocket handler.
+
+Parses incoming messages, requests initial state, and forwards actions to LiftManager.
+"""
+
 from fastapi import WebSocket
 
-from . import logger, lm
+from . import ErrorMsg, GetPowerStatesMsg, MoveLiftMsg, StopMsg, logger, lm, parse_msg
 
-async def handler(websocket: WebSocket, client_id: str):
-    """Handle Client events"""
+
+async def handler(websocket: WebSocket, client_id: str) -> None:
+    """Handle 'cli*' connections."""
     logger.info("Client %s connected", client_id)
-    await lm.send_online_lifts(client_id)
+
+    # Send initial snapshots (online lifts + power states)
+    await lm.send_online_lifts(client_id=client_id)
+    await lm.send_power_states(client_id=client_id)
+
     while True:
-        data = await websocket.receive_text()
-        try:
-            data = json.loads(data)
-        except json.JSONDecodeError:
-            logger.error("Client %s sent invalid data: %s", client_id, data)
+        raw = await websocket.receive_text()
+        msg = parse_msg(raw)
+        logger.debug("Client %s sent: %s", client_id, raw)
+
+        if isinstance(msg, ErrorMsg):
+            logger.error("Client %s sent invalid data: %s", client_id, msg.detail)
             continue
-        logger.debug("Client %s sent: %s", client_id, data)
 
-        if data['case'] == 'hello':
-            pass
-
-        elif data['case'] == 'stop':
-            # Lift moved
+        if isinstance(msg, StopMsg):
             await lm.e_stop()
 
-        elif data['case'] == 'move_lift':
-            # Lift moved
-            await lm.send_move_lift(data)
+        elif isinstance(msg, MoveLiftMsg):
+            # Enforce client_id from connection, not from payload
+            msg.client_id = client_id
+            await lm.send_move_lift(msg)
 
-        elif data['case'] == 'error':
-            # Error
-            logger.error("Client %s sent error: %s", client_id, data)
+        elif isinstance(msg, GetPowerStatesMsg):
+            await lm.send_power_states(client_id=client_id)
 
         else:
-            logger.error("Client %s sent invalid data: %s", client_id, data)
+            # 'hello' from client is a no-op; keep for protocol symmetry
+            pass
