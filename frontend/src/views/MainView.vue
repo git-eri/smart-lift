@@ -2,6 +2,11 @@
   <div>
     <div class="menubar">
       <h1>Lift Control</h1>
+      <div
+        class="power-indicator"
+        :class="{ active: isAnyPowered }"
+        title="Controller power status"
+      ></div>
       <button class="e-stop" @click="emergencyStop">STOP</button>
     </div>
     <div class="lifts">
@@ -18,13 +23,18 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import Lift from '../components/Lift.vue'
 import useWebSocket from '../services/websocket.js'
+import { powerStates } from '../services/websocket.js'
 
 const lifts = ref({})
 const activeLifts = ref(new Set())
 const { send, emergencyStop, onMessage, startup } = useWebSocket()
+
+const isAnyPowered = computed(() => {
+  return Object.values(powerStates.value).some(v => v === 1)
+})
 
 onMounted(() => {
   startup()

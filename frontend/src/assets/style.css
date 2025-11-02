@@ -32,7 +32,13 @@ body {
     background-color: #444;
   }
   .active {
-    background-color: #2ecc71;
+    background-color: #27ae60;
+  }
+  .power-indicator {
+    background-color: #444;
+  }
+  .power-indicator.active {
+    background-color: #27ae60;
   }
 }
 
@@ -138,4 +144,18 @@ body {
 
 .buttons > .indicator {
   order: -1;
+}
+
+.power-indicator {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background-color: #ccc; /* default = off */
+  margin-right: 10px;
+  transition: background-color 0.25s;
+  border: 2px solid white;
+}
+
+.power-indicator.active {
+  background-color: #2ecc71; /* green */
 }
