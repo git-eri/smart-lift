@@ -1,7 +1,7 @@
 
 services:
   traefik:
-    image: traefik:v3.4
+    image: traefik:v3.6
     container_name: traefik
     restart: unless-stopped
     command:
@@ -52,6 +52,11 @@ services:
     volumes:
       - ./binaries:/code/app/binaries
       - ./lift_info.json:/code/app/lift_info.json
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
     labels:
       - traefik.enable=true
       # --- BACKEND: Domain + HTTP ---
