@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 from pathlib import Path
@@ -37,8 +38,13 @@ class LiftManager:
             return {}
 
     def _atomic_write_json(self, path: Path, data: Any) -> None:
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf8")
+        tmp = path.parent / (path.name + ".tmp")
+
+        with open(tmp, "w", encoding="utf8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+            f.flush()
+            os.fsync(f.fileno())
+
         tmp.replace(path)
 
     async def send_online_lifts(self, *, client_id: str = "", broadcast: bool = False) -> None:
@@ -171,3 +177,30 @@ class LiftManager:
 
         async with self._lock:
             self.active_lifts.clear()
+    
+    async def change_name(self, lift_id: int, new_name: str) -> None:
+        """Change the persistent and live name of a lift and notify clients."""
+
+        str_id = str(lift_id)
+
+        # update persistent storage
+        self.lift_info[str_id] = {"name": new_name}
+
+        try:
+            self._atomic_write_json(self._lift_info_path, self.lift_info)
+        except Exception as exc:
+            logger.error("Failed to persist lift name: %s", exc)
+
+        updated = False
+
+        async with self._lock:
+            for _, lifts in self.online_lifts.items():
+                if lift_id in lifts:
+                    lifts[lift_id]["name"] = new_name
+                    updated = True
+
+        if updated:
+            logger.info("Lift %s name changed to '%s'", lift_id, new_name)
+            await self.send_online_lifts(broadcast=True)
+        else:
+            logger.warning("Lift %s not currently online", lift_id)

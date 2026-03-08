@@ -1,5 +1,5 @@
 // Gets checked by server to determine if update is needed
-#define VERSION "0.02.06"
+#define VERSION "0.03.01"
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -226,12 +226,18 @@ void webSocketEvent(WStype_t type, uint8_t *payload, size_t len) {
     auto arr = hello.createNestedArray("lifts");
     for (int i=0;i<lift_count;i++) arr.add(lift_begin+i);
     hello["power_state"] = powerState ? 1 : 0;
+    hello["version"] = VERSION;
+    hello["ip"] = WiFi.localIP().toString();
+    hello["rssi"] = WiFi.RSSI();
     sendMessage(hello);
   }
 
   if (type == WStype_TEXT) {
-    StaticJsonDocument<512> d;
-    if (deserializeJson(d, payload, len)) return;
+    StaticJsonDocument<256> d;
+    if (deserializeJson(d, payload, len)) {
+      Serial.println("[WS] Invalid JSON");
+      return;
+    }
     String c = d["case"] | "";
 
     if (c == "move_lift") {

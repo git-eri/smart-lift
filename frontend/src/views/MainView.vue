@@ -15,6 +15,7 @@
         :key="conId"
         :con-id="conId"
         :group="group"
+        :active-indicators="activeIndicators"
         @start="startLift"
         @end="endLift"
       />
@@ -23,39 +24,54 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import Lift from '../components/Lift.vue'
 import useWebSocket from '../services/websocket.js'
 import { powerStates } from '../services/websocket.js'
 
 const lifts = ref({})
 const activeLifts = ref(new Set())
+const activeIndicators = ref(new Set())
 const { send, emergencyStop, onMessage, startup } = useWebSocket()
 
 const isAnyPowered = computed(() => {
   return Object.values(powerStates.value).some(v => v === 1)
 })
 
+let removeListener
+
 onMounted(() => {
   startup()
-  onMessage((data) => {
+
+  removeListener = onMessage((data) => {
     switch (data.case) {
       case 'online_lifts':
         lifts.value = data.lifts
         break
+
       case 'stop':
         alert('EMERGENCY STOP')
         break
+
       case 'lift_moved':
-        const { lift_id, direction, toggle } = data
-        const indicator = document.getElementById(`indicator${lift_id}-${direction}`)
-        if (indicator) {
-          if (toggle === 1) indicator.classList.add('active')
-          else indicator.classList.remove('active')
+        const key = `${data.lift_id}-${data.direction}`
+
+        const next = new Set(activeIndicators.value)
+
+        if (data.toggle === 1) {
+          next.add(key)
+        } else {
+          next.delete(key)
         }
+
+        activeIndicators.value = next
         break
     }
   })
+})
+
+onUnmounted(() => {
+  removeListener?.()
 })
 
 function startLift(conId, liftId, dir) {
