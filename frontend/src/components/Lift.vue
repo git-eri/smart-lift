@@ -34,7 +34,10 @@
       >
         {{ label }}
       </button>
-      <div :id="`indicator${lift.id}-${dir}`" class="indicator"></div>
+      <div
+        class="indicator"
+        :class="{ active: activeIndicators?.has(`${lift.id}-${dir}`) }"
+      />
     </div>
   </div>
 </template>
@@ -44,7 +47,8 @@ import { ref } from 'vue'
 
 const props = defineProps({
   conId: String,
-  group: Object
+  group: Object,
+  activeIndicators: Object
 })
 const emit = defineEmits(['start', 'end'])
 
