@@ -1,5 +1,5 @@
 // Gets checked by server to determine if update is needed
-#define VERSION "0.03.01"
+#define VERSION "0.05.02"
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>

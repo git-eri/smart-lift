@@ -1,10 +1,12 @@
 {
     "con_id": "con1",
     "lift_begin": 0,
-    "ssid": "<ssid>",
-    "password": "<wifi password>",
-    "server": "<server adress>",
-    "port": 8000,
-    "use_ssl": false,
-    "self_signed": false
+    "ssid": "<SSID>",
+    "password": "<PASSWORD>",
+    "server": "<SERVER_ADDRESS> or <FQDN>",
+    "port": 8080,
+    "tls_mode": "plaintext",
+    "fingerprint": "",
+    "ws_path": "/api/ws/",
+    "update_path": "/api/update/"
 }
