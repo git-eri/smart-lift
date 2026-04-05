@@ -11,3 +11,4 @@ build
 *.pem
 config.json
 acme.json
+lift_info.json
