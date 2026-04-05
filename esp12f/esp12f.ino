@@ -14,9 +14,10 @@
 BearSSL::WiFiClientSecure clientSecure;
 WiFiClient clientPlain;
 
-// --- Optional trust anchors for OTA only ---
+// --- Optional trust anchors ---
 BearSSL::X509List *serverCert = nullptr;   // from /server.crt (self-signed)
 BearSSL::X509List *isrgRoot   = nullptr;   // from /isrg_root_x1.pem
+String isrgPem;
 
 WebSocketsClient webSocket;
 
@@ -100,14 +101,15 @@ bool parseSha1Fingerprint(const String& in, uint8_t out[20]) {
   return true;
 }
 
-// ---------- Load ISRG Root CA for OTA (optional) ----------
+// ---------- Load ISRG Root CA ----------
 bool loadISRGFromFS() {
   if (isrgRoot) return true;
   File f = LittleFS.open("/isrg_root_x1.pem", "r");
   if (!f) return false;
-  String pem = f.readString();
+  isrgPem = f.readString();
   f.close();
-  isrgRoot = new BearSSL::X509List(pem.c_str());
+  Serial.println("[SSL] Loaded isrg_root_x1.pem.");
+  isrgRoot = new BearSSL::X509List(isrgPem.c_str());
   return true;
 }
 
@@ -119,6 +121,7 @@ bool loadConfig() {
   DynamicJsonDocument doc(f.size() + 512);
   if (deserializeJson(doc, f)) { f.close(); return false; }
   f.close();
+  Serial.println("[CFG] Loaded config.json.");
 
   con_id      = String(doc["con_id"]     | "");
   lift_begin  = doc["lift_begin"]        | 0;
@@ -135,10 +138,12 @@ bool loadConfig() {
   else if (tls == "self_signed")  TLS_MODE = TLSMode::SELF_SIGNED;
   else if (tls == "insecure")     TLS_MODE = TLSMode::INSECURE;
   else                            TLS_MODE = TLSMode::PUBLIC_CA;
+  Serial.printf("[CFG] TLS mode: %s\n", tls.c_str());
 
   if (TLS_MODE == TLSMode::SELF_SIGNED) {
     File c = LittleFS.open("/server.crt", "r");
     if (!c) return false;
+    Serial.println("[SSL] Loaded server.crt.");
     String pem = c.readString(); c.close();
     serverCert = new BearSSL::X509List(pem.c_str());
   }
@@ -335,6 +340,7 @@ void setup() {
   safeRelays();
 
   Serial.begin(115200);
+  Serial.println("\n\n--- Controller Starting ---");
   LittleFS.begin();
   if (!loadConfig()) return;
 
@@ -364,16 +370,18 @@ void setup() {
       // Insecure WSS (no validation)
       webSocket.beginSSL(SERVER.c_str(), PORT, uri.c_str());
       Serial.println("[WS] WSS started (insecure, no fingerprint).");
-    } else {
-      // PUBLIC_CA or SELF_SIGNED → with this API, use fingerprint pinning if provided
+    } else if (TLS_MODE == TLSMode::SELF_SIGNED) {
+      // SELF_SIGNED -> with this API, use fingerprint pinning if provided
       if (haveFP) {
         webSocket.beginSSL(SERVER.c_str(), PORT, uri.c_str(), fpBytes);
-        Serial.println("[WS] WSS with SHA1 fingerprint pinning.");
+        Serial.println("[WS] WSS started with fingerprint pinning.");
       } else {
-        // No fingerprint supplied → insecure WSS (no CA store supported here)
         webSocket.beginSSL(SERVER.c_str(), PORT, uri.c_str());
-        Serial.println("[WS] WSS started WITHOUT fingerprint (no CA store supported by this API).");
+        Serial.println("[WS] WSS started WITHOUT fingerprint (no validation!).");
       }
+    } else if (TLS_MODE == TLSMode::PUBLIC_CA) {
+      webSocket.beginSslWithCA(SERVER.c_str(), PORT, uri.c_str(), isrgPem.c_str());
+      Serial.println("[WS] WSS with CA validation (isrg_root_x1.pem).");
     }
   }
 
