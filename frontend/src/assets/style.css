@@ -1,6 +1,6 @@
 * {
   box-sizing: border-box;
-  touch-action: manipulation;
+  /* touch-action: manipulation; */
 }
 
 body {
@@ -63,6 +63,11 @@ body {
   height: 90vh;
   margin-top: 0;
   scroll-behavior: smooth;
+  touch-action: pan-x;
+}
+
+.lifts.dragging {
+  cursor: grabbing;
 }
 
 .lift {
@@ -73,6 +78,8 @@ body {
   scroll-snap-align: start;
   padding: 2rem;
   box-sizing: border-box;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
 }
 
 .buttons {
@@ -136,6 +143,12 @@ body {
   border-radius: 50%;
   transition: background-color 0.2s;
   flex-shrink: 0;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
 }
 
 .active {

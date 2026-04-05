@@ -9,7 +9,7 @@
       ></div>
       <button class="e-stop" @click="emergencyStop">STOP</button>
     </div>
-    <div class="lifts">
+    <div class="lifts" ref="liftsContainer">
       <Lift
         v-for="(group, conId) in lifts"
         :key="conId"
@@ -30,6 +30,7 @@ import useWebSocket from '../services/websocket.js'
 import { powerStates } from '../services/websocket.js'
 
 const lifts = ref({})
+const liftsContainer = ref(null)
 const activeLifts = ref(new Set())
 const activeIndicators = ref(new Set())
 const { send, emergencyStop, onMessage, startup } = useWebSocket()
@@ -42,6 +43,11 @@ let removeListener
 
 onMounted(() => {
   startup()
+  const el = liftsContainer.value
+
+  let isDown = false
+  let startX
+  let scrollLeft
 
   removeListener = onMessage((data) => {
     switch (data.case) {
@@ -68,6 +74,38 @@ onMounted(() => {
         break
     }
   })
+
+    el.addEventListener('mousedown', (e) => {
+    isDown = true
+    el.classList.add('dragging')
+    startX = e.pageX - el.offsetLeft
+    scrollLeft = el.scrollLeft
+  })
+
+  el.addEventListener('mouseleave', () => {
+    isDown = false
+    el.classList.remove('dragging')
+  })
+
+  el.addEventListener('mouseup', () => {
+    isDown = false
+    el.classList.remove('dragging')
+  })
+
+  el.addEventListener('mousemove', (e) => {
+    if (!isDown) return
+    e.preventDefault()
+    const x = e.pageX - el.offsetLeft
+    const walk = (x - startX) * 1.5
+    el.scrollLeft = scrollLeft - walk
+  })
+
+  el.addEventListener('wheel', (e) => {
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      el.scrollLeft += e.deltaY
+      e.preventDefault()
+    }
+  }, { passive: false })
 })
 
 onUnmounted(() => {

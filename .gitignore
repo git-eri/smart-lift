@@ -8,5 +8,6 @@ build
 *.bin
 *.key
 *.crt
+*.pem
 config.json
 acme.json
