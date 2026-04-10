@@ -52,9 +52,12 @@ class LiftManager:
             payload = {
                 "case": Case.ONLINE_LIFTS,
                 "lifts": {
-                    con_id: {int(lid): dict(meta) for lid, meta in lifts.items()}
+                    con_id: {
+                        int(lid): dict(meta)
+                        for lid, meta in sorted(lifts.items(), key=lambda x: x[0])
+                    }
                     for con_id, lifts in self.online_lifts.items()
-                },
+                }
             }
 
         message = json.dumps(payload, default=str)

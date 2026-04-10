@@ -52,6 +52,7 @@ onMounted(() => {
   removeListener = onMessage((data) => {
     switch (data.case) {
       case 'online_lifts':
+        console.log(data.lifts)
         lifts.value = data.lifts
         break
 
