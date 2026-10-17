@@ -1,87 +1,100 @@
 import asyncio
-from typing import Dict, Optional
+from dataclasses import dataclass, field
+
 from fastapi import WebSocket
 
 from app.core.logging import logger
 
+SEND_TIMEOUT_SECONDS = 0.25
+
+
+@dataclass
+class Connection:
+    socket: WebSocket
+    send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    usable: bool = True
+
 
 class ConnectionManager:
-    """Tracks active WebSocket connections in a threadsafe (async) way."""
+    """Serialize writes per socket; a slow peer cannot stall every controller."""
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
-        self._connections: Dict[str, WebSocket] = {}
+        self._connections: dict[str, Connection] = {}
 
-    async def connect(self, client_id: str, ws: WebSocket) -> None:
-        """Accept the socket and ensure at most one connection per id."""
-        await ws.accept()
-
+    async def connect(self, client_id: str, ws: WebSocket) -> bool:
         async with self._lock:
-            old = self._connections.pop(client_id, None)
+            if client_id in self._connections or len(self._connections) >= 128:
+                await ws.close(code=1008, reason="Peer ID already connected or connection limit reached")
+                return False
+            await ws.accept()
+            self._connections[client_id] = Connection(ws)
+        logger.info("Connected %s", client_id)
+        return True
 
-            if old is not None:
-                try:
-                    await old.close()
-                except Exception:
-                    pass
+    async def is_current(self, client_id: str, ws: WebSocket) -> bool:
+        async with self._lock:
+            connection = self._connections.get(client_id)
+            return connection is not None and connection.socket is ws and connection.usable
 
-            self._connections[client_id] = ws
-
-            logger.debug(
-                "Connected %s (total=%d)",
-                client_id,
-                len(self._connections),
-            )
-
-    async def disconnect(self, client_id: str, ws: Optional[WebSocket] = None) -> None:
-        """Forget the connection. Does not close `ws`."""
+    async def disconnect(self, client_id: str, ws: WebSocket) -> bool:
         async with self._lock:
             current = self._connections.get(client_id)
+            if current is None or current.socket is not ws:
+                return False
+            del self._connections[client_id]
+        logger.info("Disconnected %s", client_id)
+        return True
 
-            if current is ws or (ws is None and current is not None):
-                self._connections.pop(client_id, None)
-
-                logger.debug(
-                    "Disconnected %s (total=%d)",
-                    client_id,
-                    len(self._connections),
-                )
-
-    async def send(self, client_id: str, message: str) -> None:
-        """Send a text message to a specific connection."""
+    async def send(self, client_id: str, message: str) -> bool:
         async with self._lock:
-            ws = self._connections.get(client_id)
+            connection = self._connections.get(client_id)
+        if connection is None or not connection.usable:
+            return False
 
-        if not ws:
-            return
+        async def write():
+            async with connection.send_lock:
+                if not connection.usable:
+                    return False
+                await connection.socket.send_text(message)
+                return True
 
         try:
-            await ws.send_text(message)
+            return await asyncio.wait_for(write(), timeout=SEND_TIMEOUT_SECONDS)
+        except (TimeoutError, RuntimeError, OSError):
+            logger.warning("Send failed for %s; closing connection", client_id)
         except Exception:
-            await self.disconnect(client_id)
+            logger.exception("Unexpected WebSocket send failure for %s", client_id)
+        # The endpoint's finally block owns cleanup; a failed send must not
+        # silently orphan domain state or remove a different session.
+        if connection.usable:
+            # Leave the identity registered for endpoint cleanup, but stop
+            # retrying this peer in every subsequent control-state broadcast.
+            connection.usable = False
+            try:
+                await asyncio.wait_for(connection.socket.close(code=1011), SEND_TIMEOUT_SECONDS)
+            except Exception:
+                pass
+        return False
+
+    async def _broadcast(self, message: str, prefix: str = "") -> None:
+        async with self._lock:
+            ids = [peer for peer, connection in self._connections.items()
+                   if peer.startswith(prefix) and connection.usable]
+        await asyncio.gather(*(self.send(peer, message) for peer in ids))
 
     async def broadcast(self, message: str) -> None:
-        """Send message to all connections."""
-        async with self._lock:
-            items = list(self._connections.items())
-
-        for cid, ws in items:
-            try:
-                await ws.send_text(message)
-            except Exception:
-                await self.disconnect(cid)
+        await self._broadcast(message)
 
     async def broadcast_clients(self, message: str) -> None:
-        """Send message to all 'cli*' connections."""
-        async with self._lock:
-            items = [
-                (cid, ws)
-                for cid, ws in self._connections.items()
-                if cid.startswith("cli")
-            ]
+        await self._broadcast(message, "cli")
 
-        for cid, ws in items:
+    async def close_all(self) -> None:
+        async with self._lock:
+            sockets = [connection.socket for connection in self._connections.values()]
+        async def close(ws):
             try:
-                await ws.send_text(message)
+                await asyncio.wait_for(ws.close(code=1001), SEND_TIMEOUT_SECONDS)
             except Exception:
-                await self.disconnect(cid)
+                pass
+        await asyncio.gather(*(close(ws) for ws in sockets))

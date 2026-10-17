@@ -1,32 +1,23 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
-# This script compiles the esp binary file and copies it to the binaries directory
-
-# check if binaries directory exists
-if [ ! -d ./binaries ]; then
-    echo "Creating binaries directory"
-    mkdir -p ./binaries;
-else
-    echo "Binaries directory already exists"
+mkdir -p binaries data
+# Migrate existing names once. A directory bind mount permits atomic rename;
+# mounting a single lift_info.json file does not.
+if [[ -f lift_info.json && ! -e data/lift_info.json ]]; then
+    cp -- lift_info.json data/lift_info.json
 fi
 
-# Check if the arduino-cli is installed
-if ! command -v arduino-cli &> /dev/null
-then
-    echo "arduino-cli could not be found"
-    exit
+if ! command -v arduino-cli >/dev/null 2>&1; then
+    echo 'arduino-cli is required; see README.md for pinned dependencies.' >&2
+    exit 1
 fi
 
-# Compile esp binary file
-echo "Compiling ESP binary file"
-arduino-cli compile -e --fqbn esp8266:esp8266:nodemcuv2 esp12f
-if [ $? -eq 0 ]; then
-    echo Build ok
-else
-    echo Build failed
-    exit
-fi
-# copy the esp binary to backend and rename it to version number
-cp -f ./esp12f/build/esp8266.esp8266.nodemcuv2/esp12f.ino.bin ./binaries/esp12f.ino.bin
-version=$(grep '#define VERSION' esp12f/esp12f.ino | sed -E 's/^#define VERSION "([^"]+)"$/\1/')
-mv ./binaries/esp12f.ino.bin ./binaries/$version.bin
+arduino-cli compile --fqbn esp8266:esp8266:nodemcuv2 \
+    --build-property 'compiler.cpp.extra_flags=-DWEBSOCKETS_TCP_TIMEOUT=100' \
+    --output-dir ./esp12f/build esp12f
+version=$(sed -nE 's/^#define VERSION "([0-9.]+)"\r?$/\1/p' esp12f/esp12f.ino)
+[[ -n "$version" ]] || { echo 'Firmware version not found.' >&2; exit 1; }
+cp -- esp12f/build/esp12f.ino.bin "binaries/$version.bin"
+echo "Firmware prepared: binaries/$version.bin"

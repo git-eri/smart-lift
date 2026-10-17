@@ -12,3 +12,9 @@ build
 config.json
 acme.json
 lift_info.json
+.tools/
+.venv/
+node_modules/
+dist/
+data/
+.pytest_cache/

@@ -1,209 +1,362 @@
-import os
+"""Serialized lift ownership, expiring holds and an acknowledged STOP latch."""
+
 import asyncio
 import json
+import os
+import secrets
+import time
+from collections import defaultdict, deque
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict
+from typing import Callable
 
 from app.core.logging import logger
-from app.models.messages import Case, MoveLiftMsg, HelloMsg
+from app.models.messages import ErrorMsg, HelloMsg, LiftMovedMsg, MoveLiftMsg, StopStateMsg
+
+HOLD_TIMEOUT_SECONDS = 0.5
+RESET_TIMEOUT_SECONDS = 3.0
+
+
+@dataclass
+class ActiveMovement:
+    client_id: str
+    con_id: str
+    lift_id: int
+    direction: int
+    command_id: str
+    expires_at: float
+
+    def command(self, toggle: int, *, renew: bool = False) -> dict:
+        return {
+            "case": "move_lift", "lift_id": self.lift_id,
+            "direction": self.direction, "toggle": toggle,
+            "command_id": self.command_id, "renew": renew,
+        }
 
 
 class LiftManager:
-    """Keeps runtime state and implements domain actions."""
-
-    def __init__(self, connection_manager) -> None:
+    def __init__(self, connection_manager, *, clock: Callable[[], float] = time.monotonic,
+                 lift_info_path: Path | None = None) -> None:
         self.cm = connection_manager
-        self.online_lifts: Dict[str, Dict[int, Dict[str, Any]]] = {}
-        self.active_lifts: Dict[str, int] = {}
-        self.lift_power: Dict[str, int] = {}
-
+        self.clock = clock
+        self.online_lifts: dict[str, dict[int, dict]] = {}
+        self.active_lifts: dict[tuple[str, int], ActiveMovement] = {}
+        self.lift_power: dict[str, int] = {}
+        self.controllers: dict[str, dict] = {}
+        self.stopped = True
+        self.control_epoch = secrets.token_hex(16)
+        self._reset_waiting: dict[str, str] = {}
+        self._reset_deadline = 0.0
+        self._seen_commands: dict[str, deque] = defaultdict(lambda: deque(maxlen=256))
         self._lock = asyncio.Lock()
+        self._config_lock = asyncio.Lock()
+        self._lift_info_path = lift_info_path or Path(
+            os.environ.get("SMARTLIFT_DATA_DIR", "app/data")
+        ) / "lift_info.json"
+        self.lift_info = self._load_lift_info()
 
-        self._lift_info_path = Path("app/lift_info.json")
-        self.lift_info: Dict[str, Dict[str, Any]] = self._load_lift_info()
-
-    def _load_lift_info(self) -> Dict[str, Dict[str, Any]]:
+    def _load_lift_info(self) -> dict:
         try:
             data = json.loads(self._lift_info_path.read_text(encoding="utf8"))
-            if not isinstance(data, dict):
-                raise ValueError("lift_info.json is not a dict")
+            if not isinstance(data, dict) or any(
+                not str(key).isdigit() or not isinstance(value, dict)
+                or not isinstance(value.get("name"), str)
+                for key, value in data.items()
+            ):
+                raise ValueError("Expected lift ID -> {name: string}")
             return data
-
         except FileNotFoundError:
-            logger.warning("lift_info.json not found; using empty map.")
+            return {}
+        except (OSError, ValueError) as exc:
+            logger.error("Failed to read lift names: %s", exc)
             return {}
 
-        except Exception as exc:
-            logger.error("Failed to read lift_info.json: %s", exc)
-            return {}
-
-    def _atomic_write_json(self, path: Path, data: Any) -> None:
-        tmp = path.parent / (path.name + ".tmp")
-
-        with open(tmp, "w", encoding="utf8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-            f.flush()
-            os.fsync(f.fileno())
-
+    @staticmethod
+    def _atomic_write_json(path: Path, data: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        with tmp.open("w", encoding="utf8") as output:
+            json.dump(data, output, ensure_ascii=False, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
         tmp.replace(path)
 
-    async def send_online_lifts(self, *, client_id: str = "", broadcast: bool = False) -> None:
+    async def _error(self, client_id: str, detail: str, command_id: str | None = None):
+        payload = {"case": "error", "detail": detail}
+        if command_id is not None:
+            payload["command_id"] = command_id
+        await self.cm.send(client_id, json.dumps(payload))
+
+    def _control_state(self) -> dict:
+        return {
+            "case": "control_state", "stopped": self.stopped,
+            "reset_pending": bool(self._reset_waiting),
+            "control_epoch": self.control_epoch,
+            "controllers": {peer: dict(state) for peer, state in self.controllers.items()},
+        }
+
+    async def _broadcast_control(self):
+        await self.cm.broadcast_clients(json.dumps(self._control_state()))
+
+    async def send_control_state(self, client_id: str):
         async with self._lock:
-            payload = {
-                "case": Case.ONLINE_LIFTS,
-                "lifts": {
-                    con_id: {
-                        int(lid): dict(meta)
-                        for lid, meta in sorted(lifts.items(), key=lambda x: x[0])
-                    }
-                    for con_id, lifts in self.online_lifts.items()
-                }
-            }
+            await self.cm.send(client_id, json.dumps(self._control_state()))
 
-        message = json.dumps(payload, default=str)
-
-        if broadcast and client_id == "":
-            await self.cm.broadcast_clients(message)
+    async def send_online_lifts(self, *, client_id: str = "", broadcast: bool = False):
+        async with self._lock:
+            payload = json.dumps({"case": "online_lifts", "lifts": self.online_lifts})
+        if broadcast:
+            await self.cm.broadcast_clients(payload)
         else:
-            await self.cm.send(client_id, message)
+            await self.cm.send(client_id, payload)
 
-    async def send_power_states(self, *, client_id: str = "", broadcast: bool = False) -> None:
+    async def send_power_states(self, *, client_id: str = "", broadcast: bool = False):
         async with self._lock:
-            payload = {"case": Case.POWER_STATES, "states": dict(self.lift_power)}
-
-        message = json.dumps(payload)
-
-        if broadcast and client_id == "":
-            await self.cm.broadcast_clients(message)
+            payload = json.dumps({"case": "power_states", "states": self.lift_power})
+        if broadcast:
+            await self.cm.broadcast_clients(payload)
         else:
-            await self.cm.send(client_id, message)
+            await self.cm.send(client_id, payload)
 
-    async def update_power_state(self, con_id: str, state: int) -> None:
-        state = 1 if int(state) == 1 else 0
-
+    async def update_power_state(self, con_id: str, state: int):
         async with self._lock:
-            prev = self.lift_power.get(con_id)
+            if con_id not in self.controllers:
+                return
+            previous = self.lift_power.get(con_id)
             self.lift_power[con_id] = state
+        if previous != state:
+            await self.cm.broadcast_clients(json.dumps({
+                "case": "power_state", "con_id": con_id, "state": state,
+            }))
 
-        if prev != state:
-            await self.cm.broadcast_clients(
-                json.dumps(
-                    {
-                        "case": Case.POWER_STATE,
-                        "con_id": con_id,
-                        "state": state,
-                    }
-                )
-            )
+    async def _publish_stopped(self, movement: ActiveMovement):
+        payload = movement.command(0)
+        payload.pop("renew")
+        payload.update(case="lift_moved", con_id=movement.con_id)
+        await self.cm.broadcast_clients(json.dumps(payload))
 
-            logger.info("Power state %s -> %s", con_id, state)
+    async def _end_movement(self, key: tuple[str, int]):
+        movement = self.active_lifts.pop(key)
+        sent = await self.cm.send(movement.con_id, json.dumps(movement.command(0)))
+        if not sent and movement.con_id in self.controllers:
+            self.controllers[movement.con_id]["ready"] = False
+        await self._publish_stopped(movement)
 
-    async def send_move_lift(self, data: MoveLiftMsg) -> None:
+    async def send_move_lift(self, data: MoveLiftMsg):
         async with self._lock:
-
+            key = (data.con_id, data.lift_id)
+            movement = self.active_lifts.get(key)
+            matches = movement is not None and (
+                movement.client_id == data.client_id
+                and movement.command_id == data.command_id
+                and movement.direction == data.direction
+            )
+            # Releases are permitted even with an old epoch, but can never
+            # release another operator's or a newer press's movement.
             if data.toggle == 0:
-                self.active_lifts.pop(data.client_id, None)
+                if matches:
+                    await self._end_movement(key)
+                return
 
+            now = self.clock()
+            if movement is not None and movement.expires_at <= now:
+                await self._end_movement(key)
+                movement, matches = None, False
+
+            controller = self.controllers.get(data.con_id, {})
+            reason = None
+            if self.stopped or self._reset_waiting:
+                reason = "STOP active; release controls and request reset"
+            elif data.control_epoch != self.control_epoch:
+                reason = "Control state changed; press the button again"
+            elif not controller.get("ready") or controller.get("stopped", True):
+                reason = "Controller is not ready"
+            elif data.lift_id not in self.online_lifts.get(data.con_id, {}):
+                reason = "Lift does not belong to this controller"
+            elif data.renew and not matches:
+                reason = "Hold expired or was cancelled; press the button again"
+            elif not data.renew and movement is not None:
+                reason = "Lift is already controlled; release it before changing direction"
+            elif not data.renew and data.command_id in self._seen_commands[data.client_id]:
+                reason = "Command ID already used; press the button again"
+
+            if reason:
+                await self._error(data.client_id, reason, data.command_id)
+                return
+
+            if not data.renew:
+                movement = ActiveMovement(data.client_id, data.con_id, data.lift_id,
+                                          data.direction, data.command_id,
+                                          now + HOLD_TIMEOUT_SECONDS)
+                self.active_lifts[key] = movement
+                self._seen_commands[data.client_id].append(data.command_id)
             else:
-                for cid, lid in list(self.active_lifts.items()):
-                    if lid == data.lift_id and cid != data.client_id:
-                        self.active_lifts.pop(cid, None)
+                movement.expires_at = now + HOLD_TIMEOUT_SECONDS
+            if not await self.cm.send(data.con_id, json.dumps(movement.command(1, renew=data.renew))):
+                self.controllers[data.con_id]["ready"] = False
+                self.active_lifts.pop(key, None)
+                await self._publish_stopped(movement)
+                await self._error(data.client_id, "Controller disconnected", data.command_id)
+                await self._broadcast_control()
 
-                self.active_lifts[data.client_id] = data.lift_id
-
-        await self.cm.send(data.con_id, data.model_dump_json())
-
-    async def send_lift_moved_raw(self, obj: Dict[str, Any]) -> None:
-        obj = dict(obj)
-        obj["case"] = Case.LIFT_MOVED.value
-
-        await self.cm.broadcast_clients(json.dumps(obj))
-
-    async def recv_hello(self, con_id: str, data: HelloMsg) -> None:
-
-        changed = False
-
+    async def recv_lift_moved(self, con_id: str, msg: LiftMovedMsg):
         async with self._lock:
+            key = (con_id, msg.lift_id)
+            movement = self.active_lifts.get(key)
+            matches = movement is not None and movement.command_id == msg.command_id \
+                and movement.direction == msg.direction
+            if msg.toggle == 1 and (not matches or self.stopped):
+                return
+            if msg.toggle == 0 and matches:
+                self.active_lifts.pop(key)
+            # Socket identity, never a controller-provided con_id, is canonical.
+            obj = msg.model_dump(exclude_none=True)
+            obj["con_id"] = con_id
+            await self.cm.broadcast_clients(json.dumps(obj))
 
-            self.online_lifts[con_id] = {}
-
-            for lift in data.lifts or []:
-
-                self.online_lifts[con_id][lift] = {"id": lift}
-
-                info_key = str(lift)
-
-                if info_key in self.lift_info and "name" in self.lift_info[info_key]:
-                    self.online_lifts[con_id][lift]["name"] = self.lift_info[info_key]["name"]
-                else:
-                    self.online_lifts[con_id][lift]["name"] = f"Lift {lift + 1}"
-
-            # ---- take power state from controller ----
-            if data.power_state is not None:
-                prev = self.lift_power.get(con_id)
-                self.lift_power[con_id] = 1 if int(data.power_state) == 1 else 0
-                changed = prev != self.lift_power[con_id]
-
-        # ---- Broadcast if changed ----
-        if changed:
-            await self.cm.broadcast_clients(
-                json.dumps(
-                    {
-                        "case": Case.POWER_STATE,
-                        "con_id": con_id,
-                        "state": self.lift_power[con_id],
-                    }
-                )
-            )
-
-        await self.send_online_lifts(broadcast=True)
-
-    async def controller_disconnected(self, con_id: str) -> None:
-        """Remove controller state when it disconnects."""
-
+    async def recv_hello(self, con_id: str, data: HelloMsg):
         async with self._lock:
-            removed_lifts = self.online_lifts.pop(con_id, None)
-            self.lift_power.pop(con_id, None)
-
-        if removed_lifts:
-            logger.info(
-                "Controller %s removed (%d lifts)",
-                con_id,
-                len(removed_lifts),
-            )
-
+            if con_id in self.controllers:
+                raise ValueError("Controller already registered")
+            self.online_lifts[con_id] = {
+                lift: {"id": lift, "name": self.lift_info.get(str(lift), {}).get("name", f"Lift {lift + 1}")}
+                for lift in data.lifts
+            }
+            self.lift_power[con_id] = data.power_state
+            self.controllers[con_id] = {"ready": False, "stopped": data.stop_latched}
+            ready = await self.cm.send(con_id, json.dumps({"case": "controller_ready", "protocol_version": 2}))
+            self.controllers[con_id]["ready"] = ready
+            if data.stop_latched or self.stopped or self._reset_waiting:
+                await self._stop_locked()
+            await self._broadcast_control()
         await self.send_online_lifts(broadcast=True)
         await self.send_power_states(broadcast=True)
 
-    async def e_stop(self) -> None:
-        await self.cm.broadcast(json.dumps({"case": Case.STOP}))
+    async def _stop_locked(self):
+        self.stopped = True
+        self.control_epoch = secrets.token_hex(16)
+        self._reset_waiting.clear()
+        movements = list(self.active_lifts.values())
+        self.active_lifts.clear()
+        for controller in self.controllers.values():
+            controller["stopped"] = True
+        await asyncio.gather(*(self.cm.send(peer, json.dumps({"case": "stop"})) for peer in self.controllers))
+        for movement in movements:
+            await self._publish_stopped(movement)
+        await self.cm.broadcast_clients(json.dumps({"case": "stop"}))
+        await self._broadcast_control()
 
+    async def e_stop(self):
         async with self._lock:
-            self.active_lifts.clear()
-    
-    async def change_name(self, lift_id: int, new_name: str) -> None:
-        """Change the persistent and live name of a lift and notify clients."""
+            await self._stop_locked()
 
-        str_id = str(lift_id)
+    async def reset_stop(self, client_id: str):
+        async with self._lock:
+            if not self.stopped or self._reset_waiting:
+                return
+            if not self.controllers or not all(state["ready"] for state in self.controllers.values()):
+                await self._error(client_id, "All connected controllers must be ready before reset")
+                return
+            reset_id = secrets.token_hex(16)
+            self._reset_waiting = {peer: reset_id for peer in self.controllers}
+            self._reset_deadline = self.clock() + RESET_TIMEOUT_SECONDS
+            results = await asyncio.gather(*(self.cm.send(peer, json.dumps({
+                "case": "reset_stop", "reset_id": reset_id,
+            })) for peer in self._reset_waiting))
+            if not all(results):
+                await self._stop_locked()
+                await self._error(client_id, "Reset failed; STOP remains active")
+            await self._broadcast_control()
 
-        # update persistent storage
-        self.lift_info[str_id] = {"name": new_name}
+    async def recv_stop_state(self, con_id: str, msg: StopStateMsg):
+        async with self._lock:
+            if con_id not in self.controllers:
+                return
+            if self._reset_waiting and self.clock() >= self._reset_deadline:
+                await self._stop_locked()
+            if msg.stopped:
+                if self._reset_waiting or not self.stopped:
+                    await self._stop_locked()
+                self.controllers[con_id]["stopped"] = True
+            elif self._reset_waiting.get(con_id) == msg.reset_id and msg.reset_id is not None:
+                self.controllers[con_id]["stopped"] = False
+                del self._reset_waiting[con_id]
+                if not self._reset_waiting:
+                    self.stopped = False
+                    self.control_epoch = secrets.token_hex(16)
+            elif self.stopped:
+                await self.cm.send(con_id, json.dumps({"case": "stop"}))
+            await self._broadcast_control()
 
+    async def controller_disconnected(self, con_id: str):
+        async with self._lock:
+            was_registered = con_id in self.controllers
+            self.controllers.pop(con_id, None)
+            self.online_lifts.pop(con_id, None)
+            self.lift_power.pop(con_id, None)
+            # Even an idle session loss invalidates queued starts made before
+            # the outage. A new controller session requires a fresh reset epoch.
+            if was_registered:
+                await self._stop_locked()
+            await self._broadcast_control()
+        await self.send_online_lifts(broadcast=True)
+        await self.send_power_states(broadcast=True)
+
+    async def client_disconnected(self, client_id: str):
+        async with self._lock:
+            if any(movement.client_id == client_id for movement in self.active_lifts.values()):
+                await self._stop_locked()
+            self._seen_commands.pop(client_id, None)
+        await self.cm.broadcast_clients(json.dumps({"case": "client_disconnect", "client_id": client_id}))
+
+    async def controller_error(self, con_id: str, msg: ErrorMsg):
+        logger.warning("Controller %s reported: %s", con_id, msg.detail)
+        async with self._lock:
+            if msg.command_id:
+                for key, movement in list(self.active_lifts.items()):
+                    if movement.con_id == con_id and movement.command_id == msg.command_id:
+                        await self._end_movement(key)
+                        await self._error(movement.client_id, msg.detail, msg.command_id)
+            else:
+                await self.cm.broadcast_clients(json.dumps({
+                    "case": "error", "detail": f"Controller {con_id}: {msg.detail}",
+                }))
+
+    async def expire_movements(self):
+        async with self._lock:
+            now = self.clock()
+            if self._reset_waiting and now >= self._reset_deadline:
+                logger.warning("Reset acknowledgement timed out; retaining STOP")
+                await self._stop_locked()
+            for key, movement in list(self.active_lifts.items()):
+                if now >= movement.expires_at:
+                    await self._end_movement(key)
+                    await self._error(movement.client_id, "Hold timed out; press the button again", movement.command_id)
+
+    async def watchdog(self):
         try:
-            self._atomic_write_json(self._lift_info_path, self.lift_info)
-        except Exception as exc:
-            logger.error("Failed to persist lift name: %s", exc)
+            while True:
+                await asyncio.sleep(0.05)
+                await self.expire_movements()
+        except Exception:
+            logger.exception("Movement watchdog failed; latching STOP")
+            await self.e_stop()
+            raise
 
-        updated = False
-
+    async def active_snapshot(self) -> list[dict]:
         async with self._lock:
-            for _, lifts in self.online_lifts.items():
-                if lift_id in lifts:
-                    lifts[lift_id]["name"] = new_name
-                    updated = True
+            return [asdict(movement) for movement in self.active_lifts.values()]
 
-        if updated:
-            logger.info("Lift %s name changed to '%s'", lift_id, new_name)
-            await self.send_online_lifts(broadcast=True)
-        else:
-            logger.warning("Lift %s not currently online", lift_id)
+    async def change_name(self, lift_id: int, new_name: str):
+        new_name = new_name.strip()
+        if not new_name:
+            raise ValueError("Name cannot be blank")
+        async with self._config_lock:
+            updated = {**self.lift_info, str(lift_id): {"name": new_name}}
+            await asyncio.to_thread(self._atomic_write_json, self._lift_info_path, updated)
+            async with self._lock:
+                self.lift_info = updated
+                for lifts in self.online_lifts.values():
+                    if lift_id in lifts:
+                        lifts[lift_id]["name"] = new_name
+        await self.send_online_lifts(broadcast=True)

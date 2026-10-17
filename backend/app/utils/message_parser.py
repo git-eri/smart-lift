@@ -1,56 +1,35 @@
 import json
+
 from pydantic import ValidationError
 
 from app.models.messages import (
-    Case,
-    BaseMsg,
-    HelloMsg,
-    StopMsg,
-    MoveLiftMsg,
-    PowerStateMsg,
-    GetPowerStatesMsg,
-    ErrorMsg,
-    LiftMovedMsg,
+    BaseMsg, Case, ErrorMsg, GetPowerStatesMsg, HelloMsg, LiftMovedMsg,
+    MoveLiftMsg, PowerStateMsg, ResetStopMsg, StopMsg, StopStateMsg,
 )
+
+MAX_MESSAGE_BYTES = 4096
+MESSAGE_TYPES = {
+    Case.HELLO: HelloMsg,
+    Case.STOP: StopMsg,
+    Case.RESET_STOP: ResetStopMsg,
+    Case.STOP_STATE: StopStateMsg,
+    Case.MOVE_LIFT: MoveLiftMsg,
+    Case.LIFT_MOVED: LiftMovedMsg,
+    Case.POWER_STATE: PowerStateMsg,
+    Case.GET_POWER_STATES: GetPowerStatesMsg,
+    Case.ERROR: ErrorMsg,
+}
 
 
 def parse_msg(raw: str) -> BaseMsg:
-    """Parse inbound JSON into a typed model; be liberal for lift_moved."""
-
+    """Reject malformed inputs without echoing arbitrary payloads into logs."""
+    if len(raw.encode("utf-8")) > MAX_MESSAGE_BYTES:
+        raise ValueError("Message exceeds 4096 bytes")
     try:
         obj = json.loads(raw)
-
-        if not isinstance(obj, dict) or "case" not in obj:
-            raise ValueError("Missing 'case'")
-
-        c = Case(obj["case"])
-
-    except Exception as exc:
-        return ErrorMsg(case=Case.ERROR, detail=f"Malformed message: {exc} :: {raw}")
-
-    try:
-        if c is Case.HELLO:
-            return HelloMsg(**obj)
-
-        if c is Case.STOP:
-            return StopMsg(**obj)
-
-        if c is Case.MOVE_LIFT:
-            return MoveLiftMsg(**obj)
-
-        if c is Case.POWER_STATE:
-            return PowerStateMsg(**obj)
-
-        if c is Case.GET_POWER_STATES:
-            return GetPowerStatesMsg(**obj)
-
-        if c is Case.ERROR:
-            return ErrorMsg(**obj)
-
-        if c is Case.LIFT_MOVED:
-            return LiftMovedMsg(**obj)
-
-    except ValidationError as ve:
-        return ErrorMsg(case=Case.ERROR, detail=f"Validation error: {ve.errors()} :: {obj}")
-
-    return ErrorMsg(case=Case.ERROR, detail=f"Unsupported case: {obj}")
+        if not isinstance(obj, dict):
+            raise ValueError("Expected a JSON object")
+        model = MESSAGE_TYPES[Case(obj.get("case"))]
+        return model.model_validate(obj)
+    except (json.JSONDecodeError, KeyError, TypeError, ValidationError, ValueError) as exc:
+        raise ValueError("Invalid message or unsupported protocol fields") from exc

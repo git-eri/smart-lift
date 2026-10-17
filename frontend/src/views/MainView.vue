@@ -1,131 +1,134 @@
 <template>
-  <div>
+  <div class="control-page">
     <div class="menubar">
       <h1>Lift Control</h1>
-      <div
-        class="power-indicator"
-        :class="{ active: isAnyPowered }"
-        title="Controller power status"
-      ></div>
+      <div class="power-indicator" :class="{ active: isAnyPowered }" title="Versorgungsspannung vorhanden" />
       <button class="e-stop" @click="emergencyStop">STOP</button>
     </div>
+    <div v-if="statusText" class="control-status" role="status" aria-live="polite">
+      <span>{{ statusText }}</span>
+      <button v-if="stopped || resetPending" class="reset-button" :disabled="!connected || resetPending" @click="resetStop">
+        {{ resetPending ? 'Freigabe läuft …' : 'STOP zurücksetzen / freigeben' }}
+      </button>
+    </div>
+    <p v-if="brokerError" class="error-message" role="alert">
+      {{ brokerError }} <button @click="brokerError = ''" aria-label="Fehlermeldung schließen">×</button>
+    </p>
     <div class="lifts" ref="liftsContainer">
       <Lift
-        v-for="(group, conId) in lifts"
-        :key="conId"
-        :con-id="conId"
-        :group="group"
-        :active-indicators="activeIndicators"
-        @start="startLift"
-        @end="endLift"
+        v-for="entry in sortedLifts" :key="liftKey(entry.conId, entry.lift.id)"
+        :con-id="entry.conId" :group="[entry.lift]" :enabled="canControl(entry.conId)"
+        :controller-status="controllerLabel(entry.conId)"
+        :active-indicators="activeIndicators" :pressed="pressed"
+        @start="pressController.start" @end="pressController.end"
       />
+      <p v-if="!Object.keys(onlineLifts).length" class="empty-state">Noch keine Controller verbunden.</p>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import Lift from '../components/Lift.vue'
-import useWebSocket from '../services/websocket.js'
-import { powerStates } from '../services/websocket.js'
+import useWebSocket, {
+  connected, connectionStatus, powerStates, onlineLifts, onlineControllers, controllers, stopped,
+  resetPending, brokerError, controlEpoch, canControl,
+} from '../services/websocket.js'
+import { createPressController, liftKey } from '../services/pressController.js'
 
-const lifts = ref({})
 const liftsContainer = ref(null)
-const activeLifts = ref(new Set())
+const pressed = ref(new Map())
 const activeIndicators = ref(new Set())
-const { send, emergencyStop, onMessage, startup } = useWebSocket()
-
-const isAnyPowered = computed(() => {
-  return Object.values(powerStates.value).some(v => v === 1)
+const { send, emergencyStop, resetStop, onMessage, startup } = useWebSocket()
+const pressController = createPressController({
+  send,
+  canStart: conId => canControl(conId) && document.visibilityState !== 'hidden' && document.hasFocus(),
+  getEpoch: () => controlEpoch.value,
+  onChange: state => {
+    pressed.value = state.pressed
+    activeIndicators.value = state.indicators
+  },
 })
 
-let removeListener
+const sortedLifts = computed(() => Object.entries(onlineLifts.value)
+  .flatMap(([conId, group]) => Object.values(group).map(lift => ({ conId, lift })))
+  .sort((a, b) => a.lift.id - b.lift.id || a.conId.localeCompare(b.conId, undefined, { numeric: true })))
+
+const isAnyPowered = computed(() => Object.values(powerStates.value).some(value => value === 1))
+const statusText = computed(() => {
+  if (!connected.value) return connectionStatus.value === 'connecting' ? 'Verbindung wird hergestellt …' : 'Keine Verbindung zum Server'
+  if (resetPending.value) return 'Controller werden freigegeben. Alle Tasten loslassen.'
+  if (stopped.value) return 'STOP aktiv. Zum Betrieb bewusst freigeben.'
+  return ''
+})
+
+function controllerLabel(conId) {
+  if (!connected.value || !onlineControllers.value.has(conId) || !controllers.value[conId]) return 'Controller nicht verbunden'
+  if (controllers.value[conId].ready && !controllers.value[conId].stopped) return 'Bereit'
+  return 'Controller gesperrt'
+}
+
+const removeListener = onMessage(data => {
+  if (data.case === 'lift_moved') pressController.acknowledge(data)
+  if (data.case === 'error') pressController.reject(data.command_id)
+})
+
+watch([connected, stopped, resetPending, controllers, onlineControllers], () => {
+  pressController.cancelWhere(conId => !canControl(conId))
+}, { flush: 'sync' })
+watch(controlEpoch, () => pressController.cancelWhere(), { flush: 'sync' })
+
+const cancelPresses = () => pressController.cancelWhere()
+const visibilityChanged = () => {
+  if (document.visibilityState === 'hidden') cancelPresses()
+}
+let wheelTargetIndex = null
+let lastWheelStep = -Infinity
+watch(() => sortedLifts.value.map(({ conId, lift }) => liftKey(conId, lift.id)).join('|'), () => {
+  // A controller joining can move cards: require a new press on the new layout.
+  cancelPresses()
+  wheelTargetIndex = null
+  lastWheelStep = -Infinity
+}, { flush: 'sync' })
+
+function scrollLifts(event) {
+  const container = liftsContainer.value
+  // Leave zoom and native horizontal trackpad scrolling to the browser.
+  if (event.ctrlKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
+  const count = container.querySelectorAll(':scope > .lift').length
+  if (count < 2 || container.clientWidth === 0) return
+  event.preventDefault()
+
+  const now = performance.now()
+  if (now - lastWheelStep < 300) return
+  // Keep the requested page while a smooth scroll is in progress. Otherwise
+  // short wheel steps can snap back or repeatedly target the current card.
+  const current = wheelTargetIndex !== null && now - lastWheelStep < 700
+    ? wheelTargetIndex
+    : Math.round(container.scrollLeft / container.clientWidth)
+  wheelTargetIndex = Math.max(0, Math.min(count - 1, current + Math.sign(event.deltaY)))
+  lastWheelStep = now
+  cancelPresses()
+  container.scrollTo({
+    left: wheelTargetIndex * container.clientWidth,
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+  })
+}
 
 onMounted(() => {
+  window.addEventListener('blur', cancelPresses)
+  window.addEventListener('pagehide', cancelPresses)
+  document.addEventListener('visibilitychange', visibilityChanged)
+  liftsContainer.value.addEventListener('wheel', scrollLifts, { passive: false })
   startup()
-  const el = liftsContainer.value
-
-  let isDown = false
-  let startX
-  let scrollLeft
-
-  removeListener = onMessage((data) => {
-    switch (data.case) {
-      case 'online_lifts':
-        console.log(data.lifts)
-        lifts.value = data.lifts
-        break
-
-      case 'stop':
-        alert('EMERGENCY STOP')
-        break
-
-      case 'lift_moved':
-        const key = `${data.lift_id}-${data.direction}`
-
-        const next = new Set(activeIndicators.value)
-
-        if (data.toggle === 1) {
-          next.add(key)
-        } else {
-          next.delete(key)
-        }
-
-        activeIndicators.value = next
-        break
-    }
-  })
-
-    el.addEventListener('mousedown', (e) => {
-    isDown = true
-    el.classList.add('dragging')
-    startX = e.pageX - el.offsetLeft
-    scrollLeft = el.scrollLeft
-  })
-
-  el.addEventListener('mouseleave', () => {
-    isDown = false
-    el.classList.remove('dragging')
-  })
-
-  el.addEventListener('mouseup', () => {
-    isDown = false
-    el.classList.remove('dragging')
-  })
-
-  el.addEventListener('mousemove', (e) => {
-    if (!isDown) return
-    e.preventDefault()
-    const x = e.pageX - el.offsetLeft
-    const walk = (x - startX) * 1.5
-    el.scrollLeft = scrollLeft - walk
-  })
-
-  el.addEventListener('wheel', (e) => {
-    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-      el.scrollLeft += e.deltaY
-      e.preventDefault()
-    }
-  }, { passive: false })
 })
 
-onUnmounted(() => {
-  removeListener?.()
+onBeforeUnmount(() => {
+  cancelPresses()
+  removeListener()
+  window.removeEventListener('blur', cancelPresses)
+  window.removeEventListener('pagehide', cancelPresses)
+  document.removeEventListener('visibilitychange', visibilityChanged)
+  liftsContainer.value?.removeEventListener('wheel', scrollLifts)
 })
-
-function startLift(conId, liftId, dir) {
-  const key = `${liftId}-${dir}`
-  if (!activeLifts.value.has(key)) {
-    activeLifts.value.add(key)
-    send({ case: 'move_lift', con_id: conId, lift_id: liftId, direction: dir, toggle: 1 })
-  }
-}
-
-function endLift(conId, liftId, dir) {
-  const key = `${liftId}-${dir}`
-  if (activeLifts.value.has(key)) {
-    activeLifts.value.delete(key)
-    send({ case: 'move_lift', con_id: conId, lift_id: liftId, direction: dir, toggle: 0 })
-  }
-}
 </script>

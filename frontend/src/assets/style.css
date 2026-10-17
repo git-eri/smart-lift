@@ -172,3 +172,18 @@ body {
 .power-indicator.active {
   background-color: #2ecc71; /* green */
 }
+
+.control-page { height: 100dvh; display: flex; flex-direction: column; }
+.control-page .menubar { flex-shrink: 0; }
+.control-page .lifts { flex: 1; height: auto; min-height: 0; }
+.control-status { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.75rem 1rem; flex-wrap: wrap; }
+.reset-button { padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; }
+.error-message { margin: 0; padding: 0.75rem 1rem; color: #b00020; background: #fff0f0; }
+.error-message button { margin-left: 1rem; }
+.controller-status { margin: 0; }
+.motion-button { touch-action: none; }
+.button:disabled, .reset-button:disabled { opacity: 0.45; cursor: default; transform: none; }
+.button:disabled:hover { background-color: #3498db; }
+.motion-button.pressed { outline: 3px solid #205e8b; }
+.empty-state { padding: 2rem; }
+button:focus-visible { outline: 3px solid #f3bf43; outline-offset: 3px; }

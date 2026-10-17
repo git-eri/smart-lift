@@ -1,420 +1,510 @@
-// Gets checked by server to determine if update is needed
-#define VERSION "0.05.02"
+// Gets checked by the server to determine if an update is needed.
+#define VERSION "0.06.02"
+// Compile every translation unit with -DWEBSOCKETS_TCP_TIMEOUT=100 (see init.sh).
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <WebSocketsClient.h>
-#include <Hash.h>
 #include <ArduinoJson.h>
 #include <ESP8266httpUpdate.h>
 #include <LittleFS.h>
 #include <time.h>
+#include "RelayLeases.h"
 
-// --- TLS/HTTP clients for OTA (BearSSL used only for ESPhttpUpdate) ---
-BearSSL::WiFiClientSecure clientSecure;
-WiFiClient clientPlain;
-
-// --- Optional trust anchors ---
-BearSSL::X509List *serverCert = nullptr;   // from /server.crt (self-signed)
-BearSSL::X509List *isrgRoot   = nullptr;   // from /isrg_root_x1.pem
-String isrgPem;
-
-WebSocketsClient webSocket;
-
-// =================== Hardware pins ===================
-const uint8_t powerSensePin = 4;  // D2
-const uint8_t buttonPin     = 2;  // D4 (avoid GPIO0)
-const uint8_t stcpPin       = 12; // D6 latch
-const uint8_t shcpPin       = 13; // D7 clock
-const uint8_t serPin        = 14; // D5 data
-const uint8_t oePin         = 5;  // D1 output enable (LOW active)
-
-// =================== Relay / Lift config ===================
-const uint8_t relais_count = 16;
-const uint8_t lift_count   = 5;
+constexpr uint8_t protocolVersion = 2;
+const uint8_t powerSensePin = 4;  // D2: indication only, not a hardware interlock
+const uint8_t buttonPin = 2;     // D4: test/error button, not an emergency switch
+const uint8_t stcpPin = 12;      // D6 latch
+const uint8_t shcpPin = 13;      // D7 clock
+const uint8_t serPin = 14;       // D5 data
+const uint8_t oePin = 5;         // D1 output enable (LOW active)
+const uint8_t lift_count = RelayLeases::count;
 const uint8_t lifts[lift_count][3] = {
   {15,14,13}, {12,11,10}, {9,8,0}, {1,2,3}, {4,5,6}
 };
 
-// =================== Runtime configuration ===================
-String con_id = "";
-String SSID = "";
-String PASSWORD = "";
-String SERVER = "";
-int    lift_begin = 0;
-int    PORT = 0;
-// Optional SHA1 fingerprint
-String FINGERPRINT = "";
-String WS_PATH = "/api/ws/";
-String UPDATE_PATH = "/api/update/";
+// Use the public API: protected disconnect overloads differ across library versions.
+WebSocketsClient webSocket;
+bool webSocketConnected = false;
+RelayLeases relays;
+BearSSL::WiFiClientSecure clientSecure;
+WiFiClient clientPlain;
+// These objects outlive both the OTA client and every WebSocket reconnection.
+BearSSL::X509List* trustAnchors = nullptr;
+uint8_t fingerprintBytes[20] = {};
+bool haveFingerprint = false;
+enum class TLSMode : uint8_t { PLAINTEXT, PUBLIC_CA, SELF_SIGNED };
+TLSMode tlsMode = TLSMode::PUBLIC_CA;
 
-// =================== Power sensing ===================
+String con_id, ssid, password, server, controllerToken, extraHeaders;
+String wsPath = "/api/ws/", updatePath = "/api/update/", ntpServer = "pool.ntp.org";
+int lift_begin = 0;
+uint16_t port = 0;
+bool configReady = false, webSocketStarted = false, otaChecked = false;
+bool wasWifiConnected = false, clockStarted = false;
+uint32_t lastWifiAttempt = 0, lastStatusLog = 0;
+const uint32_t wifiRetryMs = 30000;
+
 const bool POWER_ACTIVE_LOW = true;
 bool powerState = false;
-unsigned long lastPowerCheck = 0;
-const unsigned long powerPollInterval = 500;
+uint32_t lastPowerCheck = 0;
+bool btnLastStable = HIGH, btnReading = HIGH;
+uint32_t btnLastChangeMs = 0;
 
-// =================== Button debounce ===================
-bool btnLastStable = HIGH;
-bool btnReading    = HIGH;
-unsigned long btnLastChangeMs = 0;
-const unsigned long btnDebounceMs = 30;
-
-// =================== TLS mode ===================
-enum class TLSMode : uint8_t { PLAINTEXT = 0, PUBLIC_CA = 1, SELF_SIGNED = 2, INSECURE = 3 };
-TLSMode TLS_MODE = TLSMode::PUBLIC_CA;
-
-// =================== Shift register state ===================
-static uint16_t hc595_state = 0;
-
-// ---------- JSON send helper ----------
 bool sendMessage(const JsonDocument& doc) {
   String json;
   serializeJson(doc, json);
   return webSocket.sendTXT(json);
 }
 
-// ---------- Hex helpers ----------
-int hexNibble(char c) {
-  if (c >= '0' && c <= '9') return c - '0';
-  if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
-  if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
-  return -1;
+void sendError(const char* detail, const char* commandId = nullptr) {
+  Serial.printf("[CONTROL] %s\n", detail);
+  StaticJsonDocument<320> doc;
+  doc["case"] = "error";
+  doc["detail"] = detail;
+  if (commandId) doc["command_id"] = commandId;
+  sendMessage(doc);
 }
 
-bool parseSha1Fingerprint(const String& in, uint8_t out[20]) {
-  // Collect only hex digits
-  String h; h.reserve(40);
-  for (size_t i = 0; i < in.length(); i++) {
-    char c = in[i];
-    if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-      h += c;
-    }
-  }
-  if (h.length() != 40) return false;
-  for (uint8_t i = 0; i < 20; i++) {
-    int hi = hexNibble(h[i*2]);
-    int lo = hexNibble(h[i*2+1]);
-    if (hi < 0 || lo < 0) return false;
-    out[i] = (uint8_t)((hi << 4) | lo);
-  }
-  return true;
+void sendMoved(int id, const RelayLeases::Lease& lease, uint8_t toggle) {
+  StaticJsonDocument<256> doc;
+  doc["case"] = "lift_moved";
+  doc["lift_id"] = id;
+  doc["direction"] = lease.direction;
+  doc["toggle"] = toggle;
+  doc["command_id"] = lease.commandId;
+  sendMessage(doc);
 }
 
-// ---------- Load ISRG Root CA ----------
-bool loadISRGFromFS() {
-  if (isrgRoot) return true;
-  File f = LittleFS.open("/isrg_root_x1.pem", "r");
-  if (!f) return false;
-  isrgPem = f.readString();
-  f.close();
-  Serial.println("[SSL] Loaded isrg_root_x1.pem.");
-  isrgRoot = new BearSSL::X509List(isrgPem.c_str());
-  return true;
+void sendStopState(const char* resetId = nullptr) {
+  StaticJsonDocument<192> doc;
+  doc["case"] = "stop_state";
+  doc["stopped"] = relays.stopped();
+  if (resetId) doc["reset_id"] = resetId;
+  sendMessage(doc);
 }
 
-// ---------- Load config from LittleFS ----------
-bool loadConfig() {
-  if (!LittleFS.exists("/config.json")) return false;
-
-  File f = LittleFS.open("/config.json", "r");
-  DynamicJsonDocument doc(f.size() + 512);
-  if (deserializeJson(doc, f)) { f.close(); return false; }
-  f.close();
-  Serial.println("[CFG] Loaded config.json.");
-
-  con_id      = String(doc["con_id"]     | "");
-  lift_begin  = doc["lift_begin"]        | 0;
-  SSID        = String(doc["ssid"]       | "");
-  PASSWORD    = String(doc["password"]   | "");
-  SERVER      = String(doc["server"]     | "");
-  PORT        = doc["port"]              | 0;
-  WS_PATH     = String(doc["ws_path"]    | "/api/ws/");
-  UPDATE_PATH = String(doc["update_path"]| "/api/update/");
-  FINGERPRINT = String(doc["fingerprint"]| "");
-
-  String tls = String(doc["tls_mode"] | "public_ca"); tls.toLowerCase();
-  if      (tls == "plaintext")    TLS_MODE = TLSMode::PLAINTEXT;
-  else if (tls == "self_signed")  TLS_MODE = TLSMode::SELF_SIGNED;
-  else if (tls == "insecure")     TLS_MODE = TLSMode::INSECURE;
-  else                            TLS_MODE = TLSMode::PUBLIC_CA;
-  Serial.printf("[CFG] TLS mode: %s\n", tls.c_str());
-
-  if (TLS_MODE == TLSMode::SELF_SIGNED) {
-    File c = LittleFS.open("/server.crt", "r");
-    if (!c) return false;
-    Serial.println("[SSL] Loaded server.crt.");
-    String pem = c.readString(); c.close();
-    serverCert = new BearSSL::X509List(pem.c_str());
-  }
-  if (TLS_MODE == TLSMode::PUBLIC_CA) loadISRGFromFS();
-
-  return true;
-}
-
-// ---------- Set timezone + sync NTP ----------
-time_t setClock() {
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-  setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1); tzset();
-
-  time_t now = time(nullptr);
-  uint32_t ms = millis();
-  while (now < 8 * 3600 * 2 && millis() - ms < 10000) { delay(250); now = time(nullptr); }
-  return now;
-}
-
-// ---------- Read power input ----------
-bool readPowerSense() {
-  int raw = digitalRead(powerSensePin);
-  return POWER_ACTIVE_LOW ? (raw == LOW) : (raw == HIGH);
-}
-
-// ---------- 74HC595 write ----------
-void hc595Write(uint8_t pin, uint8_t val) {
-  if (pin > 15) return;
+// Latch an entire 16-bit state once; never expose intermediate relay patterns.
+void writeRelays(uint16_t state) {
   noInterrupts();
-  if (val) hc595_state |=  (1 << pin);
-  else     hc595_state &= ~(1 << pin);
   digitalWrite(stcpPin, LOW);
-  shiftOut(serPin, shcpPin, MSBFIRST, hc595_state >> 8);
-  shiftOut(serPin, shcpPin, MSBFIRST, hc595_state & 0xFF);
+  shiftOut(serPin, shcpPin, MSBFIRST, state >> 8);
+  shiftOut(serPin, shcpPin, MSBFIRST, state & 0xff);
   digitalWrite(stcpPin, HIGH);
   interrupts();
 }
 
-// ---------- Relays to safe state ----------
-void safeRelays() {
-  for (uint8_t i = 0; i < relais_count; i++) hc595Write(i, LOW);
+void disableOutputs() {
+  digitalWrite(oePin, HIGH);  // Remove output enable before changing any state.
+  writeRelays(0);
 }
 
-// ---------- OTA Firmware Update ----------
-bool updateFirmware(String url) {
-  Serial.println(String("[OTA] ") + url);
-
-  // Safe outputs while updating
-  digitalWrite(oePin, HIGH);
-  safeRelays();
-
-  t_httpUpdate_return ret;
-  if (TLS_MODE == TLSMode::PLAINTEXT) {
-    ret = ESPhttpUpdate.update(clientPlain, url, VERSION);
-  } else {
-    setClock();
-
-    if      (TLS_MODE == TLSMode::INSECURE)    clientSecure.setInsecure();
-    else if (TLS_MODE == TLSMode::SELF_SIGNED) clientSecure.setTrustAnchors(serverCert);
-    else if (TLS_MODE == TLSMode::PUBLIC_CA)   clientSecure.setTrustAnchors(isrgRoot);
-
-    if (FINGERPRINT.length()) clientSecure.setFingerprint(FINGERPRINT.c_str());
-
-    ret = ESPhttpUpdate.update(clientSecure, url, VERSION);
+void applyRelays() {
+  uint16_t bitmap = 0;
+  if (relays.ready() && !relays.stopped()) {
+    for (uint8_t i = 0; i < lift_count; ++i) {
+      const auto& lease = relays.at(i);
+      if (lease.active) bitmap |= static_cast<uint16_t>(1U << lifts[i][lease.direction]);
+    }
   }
+  // Disconnect/reset/STOP leave OE disabled until a fresh valid movement exists.
+  if (!bitmap) digitalWrite(oePin, HIGH);
+  writeRelays(bitmap);
+  if (bitmap) digitalWrite(oePin, LOW);
+}
 
-  if (ret == HTTP_UPDATE_OK) return true; // device will reboot
-  digitalWrite(oePin, LOW);
+void expireLeases() {
+  const uint32_t now = millis();
+  uint8_t expiredMask = 0;
+  for (uint8_t i = 0; i < lift_count; ++i) {
+    if (relays.expired(i, now)) {
+      relays.expire(i);
+      expiredMask |= (1U << i);
+    }
+  }
+  if (!expiredMask) return;
+  applyRelays();  // Switch off before sending potentially blocking acknowledgements.
+  for (uint8_t i = 0; i < lift_count; ++i) {
+    if (expiredMask & (1U << i)) sendMoved(lift_begin + i, relays.at(i), 0);
+  }
+}
+
+int hexNibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+bool parseFingerprint(const String& value) {
+  String hex;
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    if (hexNibble(c) >= 0) hex += c;
+    else if (c != ':' && c != ' ') return false;
+  }
+  if (hex.length() != 40) return false;
+  for (uint8_t i = 0; i < 20; ++i)
+    fingerprintBytes[i] = (hexNibble(hex[2*i]) << 4) | hexNibble(hex[2*i+1]);
+  return true;
+}
+
+bool configError(const char* message) {
+  Serial.printf("[CFG] ERROR: %s. Outputs remain disabled.\n", message);
   return false;
 }
 
-// ---------- WebSocket events ----------
-void webSocketEvent(WStype_t type, uint8_t *payload, size_t len) {
-  if (type == WStype_DISCONNECTED) {
-    Serial.println("[WS] Lost connection. Outputs safe.");
-    safeRelays();
-    digitalWrite(oePin, HIGH);
+bool validId(const String& value) {
+  if (value.length() < 4 || value.length() > 64 || !value.startsWith("con")) return false;
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    if (!isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_') return false;
   }
+  return true;
+}
 
+bool validHost(const String& value) {
+  if (!value.length() || value.length() > 253 || value[0] == '.' || value.endsWith(".")) return false;
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    if (!isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '.') return false;
+  }
+  return value.indexOf("..") < 0;
+}
+
+bool validPrefix(const String& value) {
+  if (!value.startsWith("/") || !value.endsWith("/") || value.length() > 128 ||
+      value.indexOf("..") >= 0 || value.indexOf("//") >= 0) return false;
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    if (!isalnum(static_cast<unsigned char>(c)) && c != '/' && c != '-' && c != '_') return false;
+  }
+  return true;
+}
+
+bool loadTrustAnchors(const char* path) {
+  File cert = LittleFS.open(path, "r");
+  if (!cert || !cert.size() || cert.size() > 8192) return configError("CA file missing or oversized");
+  const String pem = cert.readString();
+  cert.close();
+  trustAnchors = new BearSSL::X509List();
+  if (!trustAnchors || !trustAnchors->append(pem.c_str()) || !trustAnchors->getCount()) {
+    delete trustAnchors;
+    trustAnchors = nullptr;
+    return configError("CA file is not a valid certificate");
+  }
+  return true;
+}
+
+bool loadConfig() {
+  File config = LittleFS.open("/config.json", "r");
+  if (!config || !config.size() || config.size() > 4096) return configError("config.json missing or oversized");
+  DynamicJsonDocument doc(6144);
+  const auto error = deserializeJson(doc, config);
+  config.close();
+  if (error || !doc.is<JsonObject>()) return configError("invalid config.json");
+  if (!doc["con_id"].is<const char*>() || !doc["lift_begin"].is<int>() ||
+      !doc["ssid"].is<const char*>() || !doc["password"].is<const char*>() ||
+      !doc["server"].is<const char*>() || !doc["port"].is<int>())
+    return configError("required field missing or wrong type");
+  const char* optionalStrings[] = {"ws_path", "update_path", "tls_mode", "fingerprint", "controller_token", "ntp_server"};
+  for (const char* key : optionalStrings) {
+    if (doc.containsKey(key) && !doc[key].is<const char*>()) return configError("optional field has wrong type");
+  }
+  con_id = doc["con_id"].as<String>();
+  lift_begin = doc["lift_begin"].as<int>();
+  ssid = doc["ssid"].as<String>();
+  password = doc["password"].as<String>();
+  server = doc["server"].as<String>();
+  const int configuredPort = doc["port"].as<int>();
+  wsPath = doc["ws_path"] | "/api/ws/";
+  updatePath = doc["update_path"] | "/api/update/";
+  controllerToken = doc["controller_token"] | "";
+  ntpServer = doc["ntp_server"] | "pool.ntp.org";
+  if (!validId(con_id)) return configError("invalid controller ID");
+  if (lift_begin < 0 || lift_begin > 999996) return configError("lift range must fit IDs 0..1000000");
+  if (!ssid.length() || ssid.length() > 32 || password.length() > 64) return configError("invalid WiFi configuration");
+  if (!validHost(server) || !validHost(ntpServer)) return configError("server/NTP must be a hostname or IPv4 address");
+  if (configuredPort < 1 || configuredPort > 65535) return configError("port must be 1..65535");
+  port = static_cast<uint16_t>(configuredPort);
+  if (!validPrefix(wsPath) || !validPrefix(updatePath)) return configError("path prefixes must start/end with slash and contain safe path characters");
+  if (controllerToken.length() > 256) return configError("controller token is too long");
+  for (size_t i = 0; i < controllerToken.length(); ++i) {
+    if (controllerToken[i] < 33 || controllerToken[i] > 126) return configError("invalid character in controller token");
+  }
+  const String mode = doc["tls_mode"] | "public_ca";
+  if (mode == "plaintext") tlsMode = TLSMode::PLAINTEXT;
+  else if (mode == "public_ca") tlsMode = TLSMode::PUBLIC_CA;
+  else if (mode == "self_signed") tlsMode = TLSMode::SELF_SIGNED;
+  else return configError("tls_mode must be plaintext, public_ca or self_signed");
+  const String fingerprint = doc["fingerprint"] | "";
+  if (fingerprint.length()) {
+    if (tlsMode == TLSMode::PLAINTEXT || !parseFingerprint(fingerprint)) return configError("invalid TLS fingerprint");
+    haveFingerprint = true;
+  }
+  if (tlsMode != TLSMode::PLAINTEXT &&
+      !loadTrustAnchors(tlsMode == TLSMode::SELF_SIGNED ? "/server.crt" : "/isrg_root_x1.pem")) return false;
+  if (controllerToken.length()) extraHeaders = "X-Controller-Token: " + controllerToken + "\r\n";
+  Serial.printf("[CFG] Validated configuration; TLS mode: %s\n", mode.c_str());
+  return true;
+}
+
+bool readPowerSense() {
+  const int raw = digitalRead(powerSensePin);
+  return POWER_ACTIVE_LOW ? raw == LOW : raw == HIGH;
+}
+
+// Only called before a WebSocket session can accept movements. Never re-enable OE here.
+void checkFirmwareUpdate() {
+  disableOutputs();
+  const String url = String(tlsMode == TLSMode::PLAINTEXT ? "http://" : "https://") +
+                     server + ":" + String(port) + updatePath + con_id;
+  HTTPClient http;
+  bool began;
+  if (tlsMode == TLSMode::PLAINTEXT) {
+    began = http.begin(clientPlain, url);
+  } else {
+    if (haveFingerprint) clientSecure.setFingerprint(fingerprintBytes);
+    else clientSecure.setTrustAnchors(trustAnchors);
+    began = http.begin(clientSecure, url);
+  }
+  if (!began) { Serial.println("[OTA] HTTP initialization failed."); return; }
+  http.setTimeout(3000);
+  if (controllerToken.length()) http.addHeader("X-Controller-Token", controllerToken);
+  ESPhttpUpdate.setClientTimeout(3000);
+  const t_httpUpdate_return result = ESPhttpUpdate.update(http, VERSION);
+  http.end();
+  if (result == HTTP_UPDATE_FAILED) Serial.printf("[OTA] Update check failed (code %d).\n", ESPhttpUpdate.getLastError());
+  else if (result == HTTP_UPDATE_NO_UPDATES) Serial.println("[OTA] Firmware is current.");
+  else { delay(100); ESP.restart(); }
+}
+
+bool validCorrelationId(JsonVariantConst field) {
+  if (!field.is<const char*>()) return false;
+  const JsonString value = field.as<JsonString>();
+  if (!value.size() || value.size() > RelayLeases::maxCommandLength ||
+      strlen(value.c_str()) != value.size()) return false;
+  for (size_t i = 0; i < value.size(); ++i) {
+    const char c = value.c_str()[i];
+    if (!isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_') return false;
+  }
+  return true;
+}
+
+void webSocketEvent(WStype_t type, uint8_t* payload, size_t len) {
+  if (type == WStype_DISCONNECTED) {
+    disableOutputs();
+    relays.disconnect();
+    Serial.println(webSocketConnected
+      ? "[WS] Connection lost; outputs disabled, stop latch preserved."
+      : "[WS] Connection attempt failed; check server address, port and backend logs. Outputs disabled.");
+    webSocketConnected = false;
+    return;
+  }
+  if (type == WStype_ERROR) {
+    disableOutputs();
+    relays.disconnect();
+    // Do not log untrusted payloads or HTTP headers, which can contain credentials.
+    Serial.printf("[WS] Protocol error event (%u bytes); disconnecting with outputs disabled.\n", static_cast<unsigned>(len));
+    webSocket.disconnect();
+    return;
+  }
   if (type == WStype_CONNECTED) {
-    Serial.println("[WS] Connected");
-    digitalWrite(oePin, LOW);
-    StaticJsonDocument<256> hello;
+    webSocketConnected = true;
+    disableOutputs();
+    relays.disconnect();
+    StaticJsonDocument<384> hello;
     hello["case"] = "hello";
-    auto arr = hello.createNestedArray("lifts");
-    for (int i=0;i<lift_count;i++) arr.add(lift_begin+i);
+    hello["protocol_version"] = protocolVersion;
+    hello["stop_latched"] = relays.stopped();
+    auto ids = hello.createNestedArray("lifts");
+    for (uint8_t i = 0; i < lift_count; ++i) ids.add(lift_begin + i);
     hello["power_state"] = powerState ? 1 : 0;
     hello["version"] = VERSION;
     hello["ip"] = WiFi.localIP().toString();
     hello["rssi"] = WiFi.RSSI();
     sendMessage(hello);
+    Serial.println("[WS] Connected; awaiting protocol/session approval.");
+    return;
   }
-
-  if (type == WStype_TEXT) {
-    StaticJsonDocument<256> d;
-    if (deserializeJson(d, payload, len)) {
-      Serial.println("[WS] Invalid JSON");
-      return;
+  if (type != WStype_TEXT) return;
+  expireLeases();
+  if (len > 768) { sendError("message too large"); return; }
+  StaticJsonDocument<768> doc;
+  if (deserializeJson(doc, payload, len) || !doc.is<JsonObject>() || !doc["case"].is<const char*>()) {
+    sendError("invalid JSON message"); return;
+  }
+  const String command = doc["case"].as<String>();
+  if (command == "stop") {
+    disableOutputs();
+    relays.stop();
+    sendStopState();
+    return;
+  }
+  if (command == "controller_ready") {
+    if (!doc["protocol_version"].is<int>() || doc["protocol_version"].as<int>() != protocolVersion) {
+      disableOutputs(); relays.disconnect(); sendError("incompatible protocol version"); return;
     }
-    String c = d["case"] | "";
-
-    if (c == "move_lift") {
-      int id = d["lift_id"], dir = d["direction"], t = d["toggle"];
-      if (id<lift_begin || id>=lift_begin+lift_count || dir<0||dir>2 || (t!=0 && t!=1)) return;
-      uint8_t r = lifts[id-lift_begin][dir];
-      hc595Write(r, t==1);
-      StaticJsonDocument<128> rj; rj["case"]="lift_moved"; rj["lift_id"]=id; rj["direction"]=dir; rj["toggle"]=t; sendMessage(rj);
+    if (!relays.ready()) {
+      disableOutputs();
+      relays.acceptSession();
+      // Resynchronize indication changes between hello and session acceptance.
+      powerState = readPowerSense();
+      StaticJsonDocument<96> power;
+      power["case"] = "power_state";
+      power["state"] = powerState ? 1 : 0;
+      sendMessage(power);
     }
-
-    if (c == "stop") {
-      safeRelays(); digitalWrite(oePin, HIGH);
-      StaticJsonDocument<64> rj; rj["case"]="stop"; rj["status"]="0"; sendMessage(rj);
-    }
+    return;
+  }
+  if (command == "reset_stop") {
+    if (!validCorrelationId(doc["reset_id"])) { sendError("invalid reset ID"); return; }
+    disableOutputs();
+    if (!relays.resetStop()) { sendError("controller session is not ready"); return; }
+    sendStopState(doc["reset_id"].as<const char*>());
+    return;
+  }
+  if (command != "move_lift") { sendError("unknown command"); return; }
+  const char* commandId = validCorrelationId(doc["command_id"]) ? doc["command_id"].as<const char*>() : nullptr;
+  if (!doc["lift_id"].is<int>() || !doc["direction"].is<int>() || !doc["toggle"].is<int>() ||
+      !commandId) { sendError("invalid move field types", commandId); return; }
+  const int id = doc["lift_id"].as<int>(), direction = doc["direction"].as<int>(), toggle = doc["toggle"].as<int>();
+  if (id < lift_begin || id >= lift_begin + lift_count || direction < 0 || direction > 2 ||
+      (toggle != 0 && toggle != 1) || (toggle == 1 && !doc["renew"].is<bool>()) ||
+      (doc.containsKey("renew") && !doc["renew"].is<bool>())) { sendError("invalid move fields", commandId); return; }
+  const uint8_t index = id - lift_begin;
+  const uint32_t commandTime = millis();
+  const bool expiredDuringParsing = relays.expired(index, commandTime);
+  const RelayLeases::Lease previous = relays.at(index);
+  const auto result = relays.execute(index, direction, toggle, commandId, doc["renew"] | false, commandTime);
+  applyRelays();
+  // execute() also checks the deadline, including a deadline crossed while parsing.
+  if (expiredDuringParsing) sendMoved(id, previous, 0);
+  switch (result) {
+    case RelayLeases::Result::Accepted: sendMoved(id, relays.at(index), toggle); break;
+    case RelayLeases::Result::NotReady: sendError("controller session is not ready", commandId); break;
+    case RelayLeases::Result::Stopped: sendError("stop is latched; explicit reset required", commandId); break;
+    case RelayLeases::Result::Conflict: sendError("lift already has an active command", commandId); break;
+    case RelayLeases::Result::Stale: sendError("stale or expired command", commandId); break;
+    default: sendError("invalid command", commandId); break;
   }
 }
 
-// ---------- WiFi connect with scan + BSSID lock ----------
-bool connectWiFiRobust(const char* ssid, const char* pass,
-                       uint32_t totalTimeoutMs = 300000,
-                       uint32_t attemptTimeoutMs = 30000)
-{
+void startWebSocket() {
+  const String uri = wsPath + con_id;
+  if (tlsMode == TLSMode::PLAINTEXT) webSocket.begin(server.c_str(), port, uri.c_str(), "");
+  else if (haveFingerprint) webSocket.beginSSL(server.c_str(), port, uri.c_str(), fingerprintBytes, "");
+  else webSocket.beginSslWithCA(server.c_str(), port, uri.c_str(), trustAnchors, "");
+  // Replace the browser-like default Origin: file:// even when no token is configured.
+  webSocket.setExtraHeaders(extraHeaders.c_str());
+  Serial.printf("[WS] Target: %s://%s:%u%s; controller token: %s\n",
+                tlsMode == TLSMode::PLAINTEXT ? "ws" : "wss", server.c_str(), port,
+                uri.c_str(), controllerToken.length() ? "configured" : "not configured");
+  webSocket.onEvent(webSocketEvent);
+  webSocket.setReconnectInterval(5000);
+  webSocket.enableHeartbeat(1000, 1000, 2);
+  webSocketStarted = true;
+}
+
+void beginWifiAttempt() {
+  lastWifiAttempt = millis();
+  WiFi.begin(ssid.c_str(), password.c_str());
+  Serial.println("[WIFI] Starting nonblocking connection attempt.");
+}
+
+void serviceNetwork() {
+  if (WiFi.status() != WL_CONNECTED) {
+    if (wasWifiConnected) {
+      disableOutputs();
+      relays.disconnect();
+      if (webSocketStarted) webSocket.disconnect();
+      wasWifiConnected = false;
+      Serial.println("[WIFI] Connection lost; outputs disabled.");
+    }
+    if (static_cast<uint32_t>(millis() - lastWifiAttempt) >= wifiRetryMs) beginWifiAttempt();
+    return;
+  }
+  if (!wasWifiConnected) {
+    wasWifiConnected = true;
+    Serial.println("[WIFI] Connected.");
+  }
+  if (!clockStarted) {
+    configTime(0, 0, ntpServer.c_str());
+    clockStarted = true;
+  }
+  // CA validation needs a credible clock. Wait without blocking inputs/retry handling.
+  if (tlsMode != TLSMode::PLAINTEXT && !haveFingerprint && time(nullptr) < 1700000000) {
+    if (static_cast<uint32_t>(millis() - lastStatusLog) >= 10000) {
+      lastStatusLog = millis();
+      Serial.println("[TLS] Waiting for NTP time; outputs remain disabled.");
+    }
+    return;
+  }
+  if (!otaChecked) { otaChecked = true; checkFirmwareUpdate(); }
+  if (!webSocketStarted) startWebSocket();
+  // No active relay may survive a potentially blocking reconnection attempt.
+  if (!webSocket.isConnected() && relays.anyActive()) { disableOutputs(); relays.disconnect(); }
+  expireLeases();
+  webSocket.loop();
+  expireLeases();
+}
+
+void setup() {
+  // Set the output latch before changing the GPIO direction to avoid an enable pulse.
+  digitalWrite(oePin, HIGH);
+  pinMode(oePin, OUTPUT);
+  digitalWrite(stcpPin, LOW);
+  digitalWrite(shcpPin, LOW);
+  digitalWrite(serPin, LOW);
+  pinMode(stcpPin, OUTPUT); pinMode(shcpPin, OUTPUT); pinMode(serPin, OUTPUT);
+  disableOutputs();
+  pinMode(powerSensePin, INPUT_PULLUP);
+  pinMode(buttonPin, INPUT_PULLUP);
+  powerState = readPowerSense();
+  Serial.begin(115200);
+  Serial.println("\n--- Smart Lift controller " VERSION " / protocol 2 ---");
+  if (!LittleFS.begin()) { configError("LittleFS mount failed"); return; }
+  if (!loadConfig()) return;
+  configReady = true;
+  WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.hostname(con_id.c_str());
-
-  uint32_t start = millis();
-  uint8_t attempt = 0;
-
-  while (millis() - start < totalTimeoutMs) {
-    attempt++;
-
-    // Scan for target SSID and pick best BSSID/channel
-    int n = WiFi.scanNetworks(false, true);
-    int best = -1, bestRSSI = -127; uint8_t chan = 0;
-    uint8_t bssid[6] = {0};
-
-    for (int i=0; i<n; i++) {
-      if (WiFi.SSID(i) == ssid) {
-        int rssi = WiFi.RSSI(i);
-        if (rssi > bestRSSI) { bestRSSI = rssi; best = i; }
-      }
-    }
-
-    if (best >= 0) {
-      const uint8_t* apBSSID = WiFi.BSSID(best); // pointer on ESP8266
-      if (apBSSID) memcpy(bssid, apBSSID, 6);
-      chan = WiFi.channel(best);
-
-      Serial.printf("[WIFI] Try #%u -> '%s' RSSI %d dBm ch %u BSSID %02X:%02X:%02X:%02X:%02X:%02X\n",
-                    attempt, ssid, bestRSSI, chan,
-                    bssid[0],bssid[1],bssid[2],bssid[3],bssid[4],bssid[5]);
-
-      WiFi.begin(ssid, pass, chan, bssid, true);
-    } else {
-      Serial.printf("[WIFI] Try #%u -> SSID '%s' not found. Generic connect.\n", attempt, ssid);
-      WiFi.begin(ssid, pass);
-    }
-
-    // Wait for association + DHCP for attemptTimeoutMs
-    uint32_t a = millis();
-    while (millis() - a < attemptTimeoutMs) {
-      if (WiFi.status() == WL_CONNECTED) {
-        Serial.printf("[WIFI] Connected. IP: %s RSSI: %d dBm\n",
-                      WiFi.localIP().toString().c_str(), WiFi.RSSI());
-        return true;
-      }
-      delay(250);
-    }
-
-    // Cycle WiFi stack before next try
-    Serial.println("[WIFI] Attempt failed, cycling WiFi stack...");
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-    delay(300);
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);
-    WiFi.setAutoReconnect(true);
-  }
-  return false;
+  beginWifiAttempt();
 }
 
-// =================== SETUP ===================
-void setup() {
-  pinMode(powerSensePin, INPUT_PULLUP);
-  pinMode(buttonPin, INPUT_PULLUP);
-  pinMode(stcpPin, OUTPUT);
-  pinMode(shcpPin, OUTPUT);
-  pinMode(serPin, OUTPUT);
-  pinMode(oePin, OUTPUT);
-
-  // Start in safe state
-  digitalWrite(oePin, HIGH);
-  safeRelays();
-
-  Serial.begin(115200);
-  Serial.println("\n\n--- Controller Starting ---");
-  LittleFS.begin();
-  if (!loadConfig()) return;
-
-  if (!connectWiFiRobust(SSID.c_str(), PASSWORD.c_str())) return;
-
-  setClock();
-
-  // OTA first (safe outputs during update)
-  String url = (TLS_MODE==TLSMode::PLAINTEXT?"http://":"https://") + SERVER + ":" + String(PORT) + UPDATE_PATH + con_id;
-  if (updateFirmware(url)) { delay(300); ESP.restart(); }
-
-  // Enable outputs after OTA (if no update)
-  digitalWrite(oePin, LOW);
-
-  // ---------- WebSocket setup (Links2004 API) ----------
-  String uri = WS_PATH + con_id;
-
-  if (TLS_MODE == TLSMode::PLAINTEXT) {
-    // Plain ws://
-    webSocket.begin(SERVER.c_str(), PORT, uri.c_str());
-  } else {
-    // Prepare optional SHA1 fingerprint as 20-byte array
-    uint8_t fpBytes[20];
-    bool haveFP = parseSha1Fingerprint(FINGERPRINT, fpBytes);
-
-    if (TLS_MODE == TLSMode::INSECURE) {
-      // Insecure WSS (no validation)
-      webSocket.beginSSL(SERVER.c_str(), PORT, uri.c_str());
-      Serial.println("[WS] WSS started (insecure, no fingerprint).");
-    } else if (TLS_MODE == TLSMode::SELF_SIGNED) {
-      // SELF_SIGNED -> with this API, use fingerprint pinning if provided
-      if (haveFP) {
-        webSocket.beginSSL(SERVER.c_str(), PORT, uri.c_str(), fpBytes);
-        Serial.println("[WS] WSS started with fingerprint pinning.");
-      } else {
-        webSocket.beginSSL(SERVER.c_str(), PORT, uri.c_str());
-        Serial.println("[WS] WSS started WITHOUT fingerprint (no validation!).");
-      }
-    } else if (TLS_MODE == TLSMode::PUBLIC_CA) {
-      webSocket.beginSslWithCA(SERVER.c_str(), PORT, uri.c_str(), isrgPem.c_str());
-      Serial.println("[WS] WSS with CA validation (isrg_root_x1.pem).");
-    }
-  }
-
-  webSocket.onEvent(webSocketEvent);
-  webSocket.setReconnectInterval(5000);
-
-  powerState = readPowerSense();
-}
-
-// =================== LOOP ===================
 void loop() {
-  webSocket.loop();
-
-  // Button debounce & error trigger
-  int r = digitalRead(buttonPin);
-  if (r != btnReading) { btnReading = r; btnLastChangeMs = millis(); }
-  if ((millis() - btnLastChangeMs) > btnDebounceMs && btnReading != btnLastStable) {
+  expireLeases();
+  if (configReady) serviceNetwork();
+  else if (static_cast<uint32_t>(millis() - lastStatusLog) >= 30000) {
+    lastStatusLog = millis();
+    Serial.println("[CFG] Controller disabled; correct configuration and restart.");
+  }
+  expireLeases();
+  const uint32_t now = millis();
+  const bool reading = digitalRead(buttonPin);
+  if (reading != btnReading) { btnReading = reading; btnLastChangeMs = now; }
+  if (static_cast<uint32_t>(now - btnLastChangeMs) >= 30 && btnReading != btnLastStable) {
     btnLastStable = btnReading;
-    if (btnLastStable == LOW) {
-      StaticJsonDocument<128> e;
-      e["case"]="error"; e["type"]="Test Error"; e["error"]="Manual Trigger";
-      sendMessage(e);
+    if (btnLastStable == LOW && relays.ready()) {
+      StaticJsonDocument<160> doc;
+      doc["case"] = "error"; doc["detail"] = "Test Error: Manual Trigger";
+      sendMessage(doc);
     }
   }
-
-  // Power monitor
-  if (millis() - lastPowerCheck > powerPollInterval) {
-    lastPowerCheck = millis();
-    bool np = readPowerSense();
-    if (np != powerState) {
-      powerState = np;
-      StaticJsonDocument<64> d; d["case"] = "power_state"; d["state"] = powerState ? 1 : 0; sendMessage(d);
-      Serial.printf("[PWR] Change: %s\n", powerState ? "ON" : "OFF");
+  if (static_cast<uint32_t>(now - lastPowerCheck) >= 500) {
+    lastPowerCheck = now;
+    const bool nextPower = readPowerSense();
+    if (nextPower != powerState) {
+      powerState = nextPower;
+      if (relays.ready()) {
+        StaticJsonDocument<96> doc;
+        doc["case"] = "power_state"; doc["state"] = powerState ? 1 : 0;
+        sendMessage(doc);
+      }
+      Serial.printf("[PWR] Indication: %s\n", powerState ? "ON" : "OFF");
     }
   }
+  delay(1);
 }

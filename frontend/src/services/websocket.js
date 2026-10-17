@@ -1,124 +1,99 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { randomId, websocketUrl } from './urls.js'
+import { createSocketTransport } from './socketTransport.js'
 
-const ws = ref(null)
 const listeners = new Set()
-
-const clientId = 'cli-' + Date.now()
-
-let reconnectTimer = null
-let reconnectDelay = 1000
-const maxReconnectDelay = 10000
-
+const clientId = randomId('cli')
+export const connectionStatus = ref('disconnected')
+export const connected = computed(() => connectionStatus.value === 'connected')
 export const powerStates = ref({})
+export const onlineLifts = ref({})
+export const onlineControllers = ref(new Set())
+export const controllers = ref({})
+export const stopped = ref(true)
+export const resetPending = ref(false)
+export const controlEpoch = ref(null)
+export const brokerError = ref('')
 
-const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-const url = `${protocol}://${window.location.host}/api/ws/${clientId}`
-
-function connect() {
-  if (
-    ws.value &&
-    (ws.value.readyState === WebSocket.OPEN ||
-     ws.value.readyState === WebSocket.CONNECTING)
-  ) {
-    return
-  }
-
-  console.log('[WS] Connecting...')
-
-  const socket = new WebSocket(url)
-  ws.value = socket
-
-  socket.onopen = () => {
-    console.log('[WS] Connected', socket)
-
-    reconnectDelay = 1000
-    clearTimeout(reconnectTimer)
-  }
-
-  socket.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-
-      if (data.case === 'power_states') {
-        powerStates.value = { ...data.states }
-      }
-
-      else if (data.case === 'power_state' && data.con_id) {
-        powerStates.value = {
-          ...powerStates.value,
-          [data.con_id]: Number(data.state) ? 1 : 0
-        }
-      }
-
-      listeners.forEach(cb => cb(data))
-
-    } catch (err) {
-      console.error('[WS] Invalid JSON:', event.data)
+const transport = createSocketTransport({
+  url: websocketUrl(clientId),
+  onStatus(status) {
+    connectionStatus.value = status
+    if (status !== 'connected') {
+      stopped.value = true
+      resetPending.value = false
+      controlEpoch.value = null
+      powerStates.value = {}
+      controllers.value = {}
+      onlineControllers.value = new Set()
     }
-  }
+  },
+  onMessage(data) {
+    switch (data.case) {
+      case 'online_lifts':
+        // Keep known cards visible during controller outages.
+        onlineControllers.value = new Set(Object.keys(data.lifts || {}))
+        onlineLifts.value = { ...onlineLifts.value, ...data.lifts }
+        break
+      case 'power_states':
+        powerStates.value = { ...data.states }
+        break
+      case 'power_state':
+        if (data.con_id) powerStates.value = { ...powerStates.value, [data.con_id]: data.state === 1 ? 1 : 0 }
+        break
+      case 'control_state':
+        controlEpoch.value = typeof data.control_epoch === 'string' ? data.control_epoch : null
+        controllers.value = { ...data.controllers }
+        stopped.value = data.stopped !== false
+        resetPending.value = data.reset_pending === true
+        break
+      case 'stop':
+        stopped.value = true
+        resetPending.value = false
+        break
+      case 'error':
+        brokerError.value = typeof data.detail === 'string' ? data.detail : 'Der Server hat die Anfrage abgelehnt.'
+        resetPending.value = false
+        break
+    }
+    for (const listener of listeners) listener(data)
+  },
+})
 
-  socket.onclose = () => {
-    console.warn('[WS] Closed')
-    scheduleReconnect()
-  }
-
-  socket.onerror = () => {
-    console.warn('[WS] Error')
-  }
-}
-
-function scheduleReconnect() {
-  if (reconnectTimer) return
-
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-
-    reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay)
-
-    console.log(`[WS] Reconnecting in ${reconnectDelay}ms`)
-    connect()
-
-  }, reconnectDelay)
-}
-
-function startup() {
-  connect()
+export function canControl(conId) {
+  return connected.value && !!controlEpoch.value && !stopped.value && !resetPending.value &&
+    onlineControllers.value.has(conId) && controllers.value[conId]?.ready === true &&
+    controllers.value[conId]?.stopped === false
 }
 
 function send(payload) {
-  if (ws.value?.readyState === WebSocket.OPEN) {
-    ws.value.send(JSON.stringify({
-      ...payload,
-      client_id: clientId
-    }))
-  } else {
-    console.warn('[WS] Send failed — socket not open')
-  }
+  return transport.send({ ...payload, client_id: clientId })
 }
 
 function emergencyStop() {
-  send({ case: 'stop' })
+  stopped.value = true
+  resetPending.value = false
+  if (!send({ case: 'stop' })) brokerError.value = 'Keine Verbindung. STOP konnte nicht übertragen werden.'
 }
 
-function onMessage(cb) {
-  listeners.add(cb)
-
-  return () => {
-    listeners.delete(cb)
+function resetStop() {
+  if (!connected.value || !stopped.value || resetPending.value) return
+  brokerError.value = ''
+  resetPending.value = true
+  if (!send({ case: 'reset_stop' })) {
+    resetPending.value = false
+    brokerError.value = 'Keine Verbindung. Die Freigabe konnte nicht übertragen werden.'
   }
 }
 
+function onMessage(callback) {
+  listeners.add(callback)
+  return () => listeners.delete(callback)
+}
+
+window.addEventListener('focus', transport.startup)
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    startup()
-  }
+  if (document.visibilityState === 'visible') transport.startup()
 })
 
-window.addEventListener('focus', startup)
-
-export default () => ({
-  send,
-  emergencyStop,
-  onMessage,
-  startup
-})
+export default () => ({ send, emergencyStop, resetStop, onMessage, startup: transport.startup })

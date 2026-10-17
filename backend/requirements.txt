@@ -1,8 +1,8 @@
-pyyaml
-fastapi
-pydantic
-uvicorn
-jinja2
-websockets
-prometheus-fastapi-instrumentator
-packaging
+PyYAML==6.0.3
+fastapi==0.143.3
+pydantic==2.14.1
+uvicorn==0.54.0
+Jinja2==3.1.6
+websockets==17.2
+prometheus-fastapi-instrumentator==8.1.0
+packaging==26.3

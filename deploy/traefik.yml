@@ -1,0 +1,35 @@
+# Fixed services need no Docker socket access or service discovery.
+http:
+  routers:
+    frontend:
+      rule: PathPrefix(`/`)
+      entryPoints: [web]
+      priority: 1
+      service: frontend
+      middlewares: [browser-headers]
+    backend:
+      rule: PathPrefix(`/api`)
+      entryPoints: [web]
+      priority: 100
+      service: backend
+      middlewares: [strip-api, browser-headers]
+  middlewares:
+    strip-api:
+      stripPrefix:
+        prefixes: [/api]
+    browser-headers:
+      headers:
+        contentTypeNosniff: true
+        frameDeny: true
+        referrerPolicy: same-origin
+        customResponseHeaders:
+          Permissions-Policy: "camera=(), microphone=(), geolocation=()"
+  services:
+    frontend:
+      loadBalancer:
+        servers:
+          - url: http://frontend:8080
+    backend:
+      loadBalancer:
+        servers:
+          - url: http://backend:8000

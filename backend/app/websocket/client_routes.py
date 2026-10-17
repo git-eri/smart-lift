@@ -3,6 +3,7 @@ from app.models.messages import (
     StopMsg,
     MoveLiftMsg,
     GetPowerStatesMsg,
+    ResetStopMsg,
 )
 from app.core.state import lm
 
@@ -22,6 +23,11 @@ async def handle_get_power(msg, client_id):
     await lm.send_power_states(client_id=client_id)
 
 
+async def handle_reset(msg, client_id):
+    await lm.reset_stop(client_id)
+
+
 router.register(StopMsg, handle_stop)
 router.register(MoveLiftMsg, handle_move_lift)
 router.register(GetPowerStatesMsg, handle_get_power)
+router.register(ResetStopMsg, handle_reset)

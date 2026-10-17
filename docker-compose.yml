@@ -1,50 +1,57 @@
-
 services:
   traefik:
     image: traefik:v3.6
-    container_name: traefik
     restart: unless-stopped
+    user: "65532:65532"
     command:
       - --log.level=${TRAEFIK_LOG_LEVEL:-INFO}
-      - --api.insecure=${TRAEFIK_API_INSECURE:-false}
-      - --providers.docker=true
-      - --providers.docker.exposedbydefault=false
-      - --entryPoints.web.address=:80
-      - --entryPoints.websecure.address=:443
+      - --api.dashboard=false
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --entryPoints.web.address=:8080
     ports:
-      - "8080:80"
-      - "8443:443"
+      - "${SMARTLIFT_BIND_ADDRESS:-127.0.0.1}:${SMARTLIFT_PORT:-8080}:8080"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./deploy/traefik.yml:/etc/traefik/dynamic.yml:ro
+    depends_on:
+      backend: { condition: service_healthy }
+      frontend: { condition: service_healthy }
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: &bounded_logs
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
 
   frontend:
     build: { context: ./frontend }
     image: smart-lift-frontend
-    container_name: frontend
     restart: unless-stopped
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.frontend.rule=PathPrefix(`/`)
-      - traefik.http.routers.frontend.entrypoints=web,websecure
-      - traefik.http.routers.frontend.priority=1
-      - traefik.http.services.frontend.loadbalancer.server.port=80
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:mode=1777
+      - /var/run:mode=1777
+      - /tmp:mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *bounded_logs
 
   backend:
     build: { context: ./backend }
     image: smart-lift-backend
-    container_name: backend
     restart: unless-stopped
+    # Match these to the host owner of ./data on Linux (see .env.example).
+    user: "${SMARTLIFT_UID:-1000}:${SMARTLIFT_GID:-1000}"
+    environment:
+      SMARTLIFT_DATA_DIR: /code/app/data
+      SMARTLIFT_CONTROLLER_TOKEN: ${SMARTLIFT_CONTROLLER_TOKEN:-}
+      SMARTLIFT_ALLOWED_ORIGINS: ${SMARTLIFT_ALLOWED_ORIGINS:-}
     volumes:
-      - ./binaries:/code/app/binaries
-      - ./lift_info.json:/code/app/lift_info.json
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "5"
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.backend.rule=PathPrefix(`/api`)
-      - traefik.http.routers.backend.entrypoints=web,websecure
-      - traefik.http.routers.backend.priority=100
-      - traefik.http.services.backend.loadbalancer.server.port=8000
+      - ./binaries:/code/app/binaries:ro
+      - ./data:/code/app/data
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    stop_grace_period: 10s
+    logging: *bounded_logs

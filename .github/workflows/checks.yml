@@ -1,0 +1,62 @@
+name: Checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r backend/requirements.lock -r backend/requirements-dev.txt
+      - run: python -m unittest discover -s tests -v
+        working-directory: backend
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --audit-level=high
+  protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22.23.3' }
+      - run: pip install -r backend/requirements.lock
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run test:protocol
+        working-directory: frontend
+  firmware:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        websockets: ['2.6.1', '2.7.2']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+        with: { version: '1.5.1' }
+      - name: Install pinned firmware dependencies
+        run: |
+          arduino-cli core update-index --additional-urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
+          arduino-cli core install esp8266:esp8266@3.1.2 --additional-urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
+          arduino-cli lib install ArduinoJson@6.21.5 WebSockets@${{ matrix.websockets }}
+      - run: bash init.sh
+      - name: Exercise relay lease state machine
+        run: |
+          g++ -std=c++11 -Wall -Wextra -Werror esp12f/tests/relay_leases_test.cpp -o /tmp/relay-tests
+          /tmp/relay-tests

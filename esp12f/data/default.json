@@ -3,10 +3,12 @@
     "lift_begin": 0,
     "ssid": "<SSID>",
     "password": "<PASSWORD>",
-    "server": "<SERVER_ADDRESS> or <FQDN>",
+    "server": "192.168.1.100",
     "port": 8080,
     "tls_mode": "plaintext",
     "fingerprint": "",
+    "controller_token": "",
+    "ntp_server": "pool.ntp.org",
     "ws_path": "/api/ws/",
     "update_path": "/api/update/"
 }
