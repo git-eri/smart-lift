@@ -132,6 +132,11 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 403)
             self.assertEqual(self.client.get("/api/update/conTest", headers={"x-controller-token": "private-test-token"}).status_code, 304)
 
+    def test_non_ascii_token_header_is_rejected_without_server_error(self):
+        with patch.dict(os.environ, {"SMARTLIFT_CONTROLLER_TOKEN": "private-test-token"}):
+            response = self.client.get("/api/update/conTest", headers={b"x-controller-token": b"caf\xe9"})
+        self.assertEqual(response.status_code, 403)
+
     def test_invalid_operator_message_does_not_become_a_movement(self):
         with self.client.websocket_connect("/api/ws/cliInvalid") as operator:
             self.receive_case(operator, "control_state")
@@ -161,6 +166,17 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200)
         self.assertEqual(json.loads((self.directory / "names.json").read_text())["0"]["name"], "Garage")
         self.assertEqual(self.client.post("/api/admin/lift-rename", json={"lift_id": 0, "new_name": "  "}).status_code, 422)
+
+    def test_rename_response_matches_normalized_persistent_name(self):
+        response = self.client.post("/api/admin/lift-rename", json={"lift_id": 0, "new_name": "  Garage  "})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["new_name"], "Garage")
+        stored = json.loads((self.directory / "names.json").read_text())
+        self.assertEqual(stored["0"]["name"], response.json()["new_name"])
+
+    def test_health_reports_latched_watchdog_failure(self):
+        self.lm.watchdog_failed = True
+        self.assertEqual(self.client.get("/api/health").status_code, 503)
 
 
 if __name__ == "__main__":

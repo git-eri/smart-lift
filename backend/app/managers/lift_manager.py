@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.core.logging import logger
+from app.core.protocol import PROTOCOL_VERSION
 from app.models.messages import ErrorMsg, HelloMsg, LiftMovedMsg, MoveLiftMsg, StopStateMsg
 
 HOLD_TIMEOUT_SECONDS = 0.5
@@ -19,6 +20,8 @@ RESET_TIMEOUT_SECONDS = 3.0
 
 @dataclass
 class ActiveMovement:
+    """One owner's hold; its deadline uses monotonic time, never wall-clock/NTP."""
+
     client_id: str
     con_id: str
     lift_id: int
@@ -35,6 +38,13 @@ class ActiveMovement:
 
 
 class LiftManager:
+    """Own all control state in one process.
+
+    The domain lock orders starts, renewals, STOP and reset acknowledgements.
+    Methods ending in ``_locked`` require that lock. Socket I/O is bounded by
+    ConnectionManager; the ESP's independent lease remains the last fallback.
+    """
+
     def __init__(self, connection_manager, *, clock: Callable[[], float] = time.monotonic,
                  lift_info_path: Path | None = None) -> None:
         self.cm = connection_manager
@@ -44,6 +54,9 @@ class LiftManager:
         self.lift_power: dict[str, int] = {}
         self.controllers: dict[str, dict] = {}
         self.stopped = True
+        # A failed watchdog cannot be repaired by an operator reset. Only a
+        # fresh process may restore that prerequisite for accepting movements.
+        self.watchdog_failed = False
         self.control_epoch = secrets.token_hex(16)
         self._reset_waiting: dict[str, str] = {}
         self._reset_deadline = 0.0
@@ -81,13 +94,15 @@ class LiftManager:
             os.fsync(output.fileno())
         tmp.replace(path)
 
-    async def _error(self, client_id: str, detail: str, command_id: str | None = None):
+    async def send_error(self, client_id: str, detail: str, command_id: str | None = None) -> None:
+        """Reject a request without exposing its raw payload or credentials."""
         payload = {"case": "error", "detail": detail}
         if command_id is not None:
             payload["command_id"] = command_id
         await self.cm.send(client_id, json.dumps(payload))
 
     def _control_state(self) -> dict:
+        """Describe protocol readiness; this does not report mechanical feedback."""
         return {
             "case": "control_state", "stopped": self.stopped,
             "reset_pending": bool(self._reset_waiting),
@@ -101,6 +116,19 @@ class LiftManager:
     async def send_control_state(self, client_id: str):
         async with self._lock:
             await self.cm.send(client_id, json.dumps(self._control_state()))
+
+    async def online_snapshot(self) -> dict[str, dict[int, dict]]:
+        """Copy nested metadata under the same lock used by rename/disconnect."""
+        async with self._lock:
+            return {
+                peer: {lift_id: dict(metadata) for lift_id, metadata in lifts.items()}
+                for peer, lifts in self.online_lifts.items()
+            }
+
+    async def power_snapshot(self) -> dict[str, int]:
+        """Return a detached snapshot for REST callers."""
+        async with self._lock:
+            return dict(self.lift_power)
 
     async def send_online_lifts(self, *, client_id: str = "", broadcast: bool = False):
         async with self._lock:
@@ -135,7 +163,8 @@ class LiftManager:
         payload.update(case="lift_moved", con_id=movement.con_id)
         await self.cm.broadcast_clients(json.dumps(payload))
 
-    async def _end_movement(self, key: tuple[str, int]):
+    async def _end_movement_locked(self, key: tuple[str, int]) -> None:
+        """Forget ownership first, then send the matching release to the ESP."""
         movement = self.active_lifts.pop(key)
         sent = await self.cm.send(movement.con_id, json.dumps(movement.command(0)))
         if not sent and movement.con_id in self.controllers:
@@ -143,6 +172,7 @@ class LiftManager:
         await self._publish_stopped(movement)
 
     async def send_move_lift(self, data: MoveLiftMsg):
+        """Validate an exact press identity before changing an actuator lease."""
         async with self._lock:
             key = (data.con_id, data.lift_id)
             movement = self.active_lifts.get(key)
@@ -155,17 +185,19 @@ class LiftManager:
             # release another operator's or a newer press's movement.
             if data.toggle == 0:
                 if matches:
-                    await self._end_movement(key)
+                    await self._end_movement_locked(key)
                 return
 
             now = self.clock()
             if movement is not None and movement.expires_at <= now:
-                await self._end_movement(key)
+                await self._end_movement_locked(key)
                 movement, matches = None, False
 
             controller = self.controllers.get(data.con_id, {})
             reason = None
-            if self.stopped or self._reset_waiting:
+            if self.watchdog_failed:
+                reason = "Movement watchdog unavailable; restart the backend"
+            elif self.stopped or self._reset_waiting:
                 reason = "STOP active; release controls and request reset"
             elif data.control_epoch != self.control_epoch:
                 reason = "Control state changed; press the button again"
@@ -181,7 +213,7 @@ class LiftManager:
                 reason = "Command ID already used; press the button again"
 
             if reason:
-                await self._error(data.client_id, reason, data.command_id)
+                await self.send_error(data.client_id, reason, data.command_id)
                 return
 
             if not data.renew:
@@ -196,13 +228,17 @@ class LiftManager:
                 self.controllers[data.con_id]["ready"] = False
                 self.active_lifts.pop(key, None)
                 await self._publish_stopped(movement)
-                await self._error(data.client_id, "Controller disconnected", data.command_id)
+                await self.send_error(data.client_id, "Controller disconnected", data.command_id)
                 await self._broadcast_control()
 
     async def recv_lift_moved(self, con_id: str, msg: LiftMovedMsg):
+        """Attach socket identity and ignore stale positive acknowledgements."""
         async with self._lock:
             key = (con_id, msg.lift_id)
             movement = self.active_lifts.get(key)
+            if msg.toggle == 1 and movement is not None and movement.expires_at <= self.clock():
+                await self._end_movement_locked(key)
+                return
             matches = movement is not None and movement.command_id == msg.command_id \
                 and movement.direction == msg.direction
             if msg.toggle == 1 and (not matches or self.stopped):
@@ -224,7 +260,7 @@ class LiftManager:
             }
             self.lift_power[con_id] = data.power_state
             self.controllers[con_id] = {"ready": False, "stopped": data.stop_latched}
-            ready = await self.cm.send(con_id, json.dumps({"case": "controller_ready", "protocol_version": 2}))
+            ready = await self.cm.send(con_id, json.dumps({"case": "controller_ready", "protocol_version": PROTOCOL_VERSION}))
             self.controllers[con_id]["ready"] = ready
             if data.stop_latched or self.stopped or self._reset_waiting:
                 await self._stop_locked()
@@ -233,6 +269,7 @@ class LiftManager:
         await self.send_power_states(broadcast=True)
 
     async def _stop_locked(self):
+        """Invalidate every hold and reset attempt before any awaited network I/O."""
         self.stopped = True
         self.control_epoch = secrets.token_hex(16)
         self._reset_waiting.clear()
@@ -251,11 +288,15 @@ class LiftManager:
             await self._stop_locked()
 
     async def reset_stop(self, client_id: str):
+        """Request controller acknowledgements; this method never clears STOP."""
         async with self._lock:
+            if self.watchdog_failed:
+                await self.send_error(client_id, "Movement watchdog unavailable; restart the backend")
+                return
             if not self.stopped or self._reset_waiting:
                 return
             if not self.controllers or not all(state["ready"] for state in self.controllers.values()):
-                await self._error(client_id, "All connected controllers must be ready before reset")
+                await self.send_error(client_id, "All connected controllers must be ready before reset")
                 return
             reset_id = secrets.token_hex(16)
             self._reset_waiting = {peer: reset_id for peer in self.controllers}
@@ -265,10 +306,11 @@ class LiftManager:
             })) for peer in self._reset_waiting))
             if not all(results):
                 await self._stop_locked()
-                await self._error(client_id, "Reset failed; STOP remains active")
+                await self.send_error(client_id, "Reset failed; STOP remains active")
             await self._broadcast_control()
 
     async def recv_stop_state(self, con_id: str, msg: StopStateMsg):
+        """Only acknowledgements from the current reset may complete its barrier."""
         async with self._lock:
             if con_id not in self.controllers:
                 return
@@ -315,8 +357,8 @@ class LiftManager:
             if msg.command_id:
                 for key, movement in list(self.active_lifts.items()):
                     if movement.con_id == con_id and movement.command_id == msg.command_id:
-                        await self._end_movement(key)
-                        await self._error(movement.client_id, msg.detail, msg.command_id)
+                        await self._end_movement_locked(key)
+                        await self.send_error(movement.client_id, msg.detail, msg.command_id)
             else:
                 await self.cm.broadcast_clients(json.dumps({
                     "case": "error", "detail": f"Controller {con_id}: {msg.detail}",
@@ -330,15 +372,17 @@ class LiftManager:
                 await self._stop_locked()
             for key, movement in list(self.active_lifts.items()):
                 if now >= movement.expires_at:
-                    await self._end_movement(key)
-                    await self._error(movement.client_id, "Hold timed out; press the button again", movement.command_id)
+                    await self._end_movement_locked(key)
+                    await self.send_error(movement.client_id, "Hold timed out; press the button again", movement.command_id)
 
     async def watchdog(self):
+        """Expire holds independently of operator traffic; fail closed on error."""
         try:
             while True:
                 await asyncio.sleep(0.05)
                 await self.expire_movements()
         except Exception:
+            self.watchdog_failed = True
             logger.exception("Movement watchdog failed; latching STOP")
             await self.e_stop()
             raise
@@ -347,7 +391,8 @@ class LiftManager:
         async with self._lock:
             return [asdict(movement) for movement in self.active_lifts.values()]
 
-    async def change_name(self, lift_id: int, new_name: str):
+    async def change_name(self, lift_id: int, new_name: str) -> str:
+        """Persist successfully before publishing the normalized name to clients."""
         new_name = new_name.strip()
         if not new_name:
             raise ValueError("Name cannot be blank")
@@ -360,3 +405,4 @@ class LiftManager:
                     if lift_id in lifts:
                         lifts[lift_id]["name"] = new_name
         await self.send_online_lifts(broadcast=True)
+        return new_name

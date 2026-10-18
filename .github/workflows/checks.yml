@@ -46,6 +46,7 @@ jobs:
     strategy:
       matrix:
         websockets: ['2.6.1', '2.7.2']
+        arduinojson: ['6.21.5', '7.4.3']
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-arduino-cli@v2
@@ -54,7 +55,7 @@ jobs:
         run: |
           arduino-cli core update-index --additional-urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
           arduino-cli core install esp8266:esp8266@3.1.2 --additional-urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
-          arduino-cli lib install ArduinoJson@6.21.5 WebSockets@${{ matrix.websockets }}
+          arduino-cli lib install ArduinoJson@${{ matrix.arduinojson }} WebSockets@${{ matrix.websockets }}
       - run: bash init.sh
       - name: Exercise relay lease state machine
         run: |

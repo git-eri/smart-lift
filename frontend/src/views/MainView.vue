@@ -51,6 +51,7 @@ const pressController = createPressController({
 })
 
 const sortedLifts = computed(() => Object.entries(onlineLifts.value)
+  // Controller groups must not determine the user's global numeric lift order.
   .flatMap(([conId, group]) => Object.values(group).map(lift => ({ conId, lift })))
   .sort((a, b) => a.lift.id - b.lift.id || a.conId.localeCompare(b.conId, undefined, { numeric: true })))
 
@@ -76,6 +77,7 @@ const removeListener = onMessage(data => {
 watch([connected, stopped, resetPending, controllers, onlineControllers], () => {
   pressController.cancelWhere(conId => !canControl(conId))
 }, { flush: 'sync' })
+// An epoch change invalidates even presses whose controller remains online.
 watch(controlEpoch, () => pressController.cancelWhere(), { flush: 'sync' })
 
 const cancelPresses = () => pressController.cancelWhere()
@@ -124,6 +126,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  // Release before removing listeners or destroying pointer-owning child buttons.
   cancelPresses()
   removeListener()
   window.removeEventListener('blur', cancelPresses)

@@ -1,13 +1,13 @@
+"""Validate untrusted JSON before role-specific WebSocket dispatch."""
+
 import json
 
-from pydantic import ValidationError
-
+from app.core.protocol import MAX_MESSAGE_BYTES
 from app.models.messages import (
     BaseMsg, Case, ErrorMsg, GetPowerStatesMsg, HelloMsg, LiftMovedMsg,
     MoveLiftMsg, PowerStateMsg, ResetStopMsg, StopMsg, StopStateMsg,
 )
 
-MAX_MESSAGE_BYTES = 4096
 MESSAGE_TYPES = {
     Case.HELLO: HelloMsg,
     Case.STOP: StopMsg,
@@ -31,5 +31,5 @@ def parse_msg(raw: str) -> BaseMsg:
             raise ValueError("Expected a JSON object")
         model = MESSAGE_TYPES[Case(obj.get("case"))]
         return model.model_validate(obj)
-    except (json.JSONDecodeError, KeyError, TypeError, ValidationError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("Invalid message or unsupported protocol fields") from exc

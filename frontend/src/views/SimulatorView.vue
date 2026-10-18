@@ -81,6 +81,7 @@ function startup() {
 
 function shutdown() {
   const socket = ws
+  // Old close/error callbacks must not tear down a subsequently started session.
   ws = null
   if (timer !== null) clearInterval(timer)
   timer = null
@@ -93,6 +94,7 @@ function shutdown() {
 window.addEventListener('pagehide', shutdown)
 document.addEventListener('visibilitychange', visibilityChanged)
 function visibilityChanged() {
+  // Background timer throttling would make this browser-based controller invalid.
   if (document.visibilityState === 'hidden') shutdown()
 }
 onBeforeUnmount(() => {

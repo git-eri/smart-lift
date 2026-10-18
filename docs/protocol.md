@@ -10,7 +10,7 @@ Maximal 128 Verbindungen und 4096 Byte pro Backend-Nachricht.
 Controller senden zuerst innerhalb von fünf Sekunden:
 
 ```json
-{"case":"hello","protocol_version":2,"lifts":[0,1,2,3,4],"power_state":1,"stop_latched":true,"version":"0.06.00"}
+{"case":"hello","protocol_version":2,"lifts":[0,1,2,3,4],"power_state":1,"stop_latched":true,"version":"0.06.03"}
 ```
 
 Optional: `ip`, `rssi`. Alte oder ungültige Hello-Nachrichten schließen die
@@ -91,6 +91,17 @@ Erst wenn alle passenden Bestätigungen innerhalb von drei Sekunden eingetroffen
 sind, gibt das Backend mit neuer Epoch frei. Ein Abbruch oder STOP während des
 Resets verwirft die Freigabe. Verspätete Bestätigungen passen nicht zum nächsten
 Reset. Kein Reset schaltet selbst ein Relais ein.
+
+Ein erneut gesendeter, zuletzt erfolgreich bestätigter Reset wird bei bereits
+aufgehobenem STOP nur bestätigt; er darf inzwischen gestartete Bewegungen nicht
+löschen. Dieselbe ID darf einen späteren STOP nicht aufheben. Der ESP merkt
+sich dafür die letzte akzeptierte Reset-ID über Wiederverbindungen hinweg,
+jedoch weder eine vollständige Historie noch über einen Stromausfall hinweg.
+Jeder neue Reset-Vorgang des Backends verwendet eine neue ID.
+
+Fällt der Backend-Watchdog selbst aus, bleibt die Steuerung bis zu einem
+Prozessneustart gesperrt. Ein Bediener-Reset kann diesen Fehler nicht aufheben;
+`/api/health` liefert in diesem Zustand 503.
 
 ## Abbrüche und Fehler
 

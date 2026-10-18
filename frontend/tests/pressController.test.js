@@ -120,3 +120,31 @@ test('server lease expiry and targeted rejection end only the matching press', (
   f.control.reject(f.messages[1].command_id)
   assert.equal(f.state.pressed.size, 0)
 })
+
+test('a synchronous disconnect during renewal cancels the remaining renewal snapshot', () => {
+  const attempted = []
+  let tick
+  let control
+  let sequence = 0
+  control = createPressController({
+    send: data => {
+      attempted.push(data)
+      if (data.renew) {
+        control.cancelWhere()
+        return false
+      }
+      return true
+    },
+    canStart: () => true,
+    getEpoch: () => 'epoch-1',
+    newId: () => `command-${++sequence}`,
+    every: callback => { tick = callback; return 1 },
+    cancelEvery: () => { tick = null },
+  })
+  control.start('con-1', 0, 0)
+  control.start('con-2', 5, 1)
+  tick()
+  assert.equal(attempted.filter(data => data.renew).length, 1)
+  assert.equal(attempted.filter(data => data.toggle === 0).length, 2)
+  assert.equal(tick, null)
+})

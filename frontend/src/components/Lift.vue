@@ -81,6 +81,8 @@ function endKey(event, id, dir) {
 
 function clearOwner(id) {
   const owner = owners.get(id)
+  // Releasing capture may synchronously report lostpointercapture; remove the
+  // owner first so that event cannot release a second time or end a newer press.
   owners.delete(id)
   if (owner?.kind === 'pointer' && owner.element.hasPointerCapture(owner.pointerId)) owner.element.releasePointerCapture(owner.pointerId)
 }
@@ -92,6 +94,8 @@ function endOwned(id, dir) {
 }
 
 watch(() => props.pressed, () => {
+  // STOP/expiry can end a press without a pointerup or keyup. Drop its physical
+  // owner after Vue has received the authoritative pressed snapshot.
   for (const [id, owner] of owners) if (!isPressed(id, owner.dir)) clearOwner(id)
 }, { flush: 'post' })
 onBeforeUnmount(() => {

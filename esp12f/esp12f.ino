@@ -1,5 +1,5 @@
 // Gets checked by the server to determine if an update is needed.
-#define VERSION "0.06.02"
+#define VERSION "0.06.03"
 // Compile every translation unit with -DWEBSOCKETS_TCP_TIMEOUT=100 (see init.sh).
 
 #include <Arduino.h>
@@ -10,6 +10,14 @@
 #include <LittleFS.h>
 #include <time.h>
 #include "RelayLeases.h"
+
+// ArduinoJson 6 uses fixed message buffers; version 7 manages its own capacity.
+// Keep both public APIs supported without relying on deprecated version-7 aliases.
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+template <size_t Capacity> using MessageDocument = JsonDocument;
+#else
+template <size_t Capacity> using MessageDocument = StaticJsonDocument<Capacity>;
+#endif
 
 constexpr uint8_t protocolVersion = 2;
 const uint8_t powerSensePin = 4;  // D2: indication only, not a hardware interlock
@@ -59,7 +67,7 @@ bool sendMessage(const JsonDocument& doc) {
 
 void sendError(const char* detail, const char* commandId = nullptr) {
   Serial.printf("[CONTROL] %s\n", detail);
-  StaticJsonDocument<320> doc;
+  MessageDocument<320> doc;
   doc["case"] = "error";
   doc["detail"] = detail;
   if (commandId) doc["command_id"] = commandId;
@@ -67,7 +75,7 @@ void sendError(const char* detail, const char* commandId = nullptr) {
 }
 
 void sendMoved(int id, const RelayLeases::Lease& lease, uint8_t toggle) {
-  StaticJsonDocument<256> doc;
+  MessageDocument<256> doc;
   doc["case"] = "lift_moved";
   doc["lift_id"] = id;
   doc["direction"] = lease.direction;
@@ -77,10 +85,17 @@ void sendMoved(int id, const RelayLeases::Lease& lease, uint8_t toggle) {
 }
 
 void sendStopState(const char* resetId = nullptr) {
-  StaticJsonDocument<192> doc;
+  MessageDocument<192> doc;
   doc["case"] = "stop_state";
   doc["stopped"] = relays.stopped();
   if (resetId) doc["reset_id"] = resetId;
+  sendMessage(doc);
+}
+
+void sendPowerState() {
+  MessageDocument<96> doc;
+  doc["case"] = "power_state";
+  doc["state"] = powerState ? 1 : 0;
   sendMessage(doc);
 }
 
@@ -99,6 +114,12 @@ void disableOutputs() {
   writeRelays(0);
 }
 
+// Transport loss removes session approval, never the operator's STOP latch.
+void clearControllerSession() {
+  disableOutputs();
+  relays.disconnect();
+}
+
 void applyRelays() {
   uint16_t bitmap = 0;
   if (relays.ready() && !relays.stopped()) {
@@ -107,7 +128,7 @@ void applyRelays() {
       if (lease.active) bitmap |= static_cast<uint16_t>(1U << lifts[i][lease.direction]);
     }
   }
-  // Disconnect/reset/STOP leave OE disabled until a fresh valid movement exists.
+  // A session/reset does not energize outputs: only accepted live leases do.
   if (!bitmap) digitalWrite(oePin, HIGH);
   writeRelays(bitmap);
   if (bitmap) digitalWrite(oePin, LOW);
@@ -125,6 +146,8 @@ void expireLeases() {
   if (!expiredMask) return;
   applyRelays();  // Switch off before sending potentially blocking acknowledgements.
   for (uint8_t i = 0; i < lift_count; ++i) {
+    // A failed send can synchronously disconnect and clear all lease records.
+    if (!relays.ready()) break;
     if (expiredMask & (1U << i)) sendMoved(lift_begin + i, relays.at(i), 0);
   }
 }
@@ -196,20 +219,30 @@ bool loadTrustAnchors(const char* path) {
   return true;
 }
 
+bool isJsonText(JsonVariantConst field) {
+  if (!field.is<const char*>()) return false;
+  const JsonString value = field.as<JsonString>();
+  return ProtocolText::isText(value.c_str(), value.size());
+}
+
 bool loadConfig() {
   File config = LittleFS.open("/config.json", "r");
   if (!config || !config.size() || config.size() > 4096) return configError("config.json missing or oversized");
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
   DynamicJsonDocument doc(6144);
+#endif
   const auto error = deserializeJson(doc, config);
   config.close();
   if (error || !doc.is<JsonObject>()) return configError("invalid config.json");
-  if (!doc["con_id"].is<const char*>() || !doc["lift_begin"].is<int>() ||
-      !doc["ssid"].is<const char*>() || !doc["password"].is<const char*>() ||
-      !doc["server"].is<const char*>() || !doc["port"].is<int>())
+  if (!isJsonText(doc["con_id"]) || !doc["lift_begin"].is<int>() ||
+      !isJsonText(doc["ssid"]) || !isJsonText(doc["password"]) ||
+      !isJsonText(doc["server"]) || !doc["port"].is<int>())
     return configError("required field missing or wrong type");
   const char* optionalStrings[] = {"ws_path", "update_path", "tls_mode", "fingerprint", "controller_token", "ntp_server"};
   for (const char* key : optionalStrings) {
-    if (doc.containsKey(key) && !doc[key].is<const char*>()) return configError("optional field has wrong type");
+    if (!doc[key].isUnbound() && !isJsonText(doc[key])) return configError("optional string field is invalid");
   }
   con_id = doc["con_id"].as<String>();
   lift_begin = doc["lift_begin"].as<int>();
@@ -282,96 +315,37 @@ void checkFirmwareUpdate() {
 bool validCorrelationId(JsonVariantConst field) {
   if (!field.is<const char*>()) return false;
   const JsonString value = field.as<JsonString>();
-  if (!value.size() || value.size() > RelayLeases::maxCommandLength ||
-      strlen(value.c_str()) != value.size()) return false;
-  for (size_t i = 0; i < value.size(); ++i) {
-    const char c = value.c_str()[i];
-    if (!isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_') return false;
-  }
-  return true;
+  return ProtocolText::isIdentifier(value.c_str(), value.size());
 }
 
-void webSocketEvent(WStype_t type, uint8_t* payload, size_t len) {
-  if (type == WStype_DISCONNECTED) {
+void handleResetStop(JsonObjectConst doc) {
+  if (!validCorrelationId(doc["reset_id"])) { sendError("invalid reset ID"); return; }
+  const char* resetId = doc["reset_id"].as<const char*>();
+  const auto result = relays.resetStop(resetId);
+  if (result == RelayLeases::ResetResult::Accepted) {
+    // STOP already had OE disabled; accepting reset clears state but never enables it.
     disableOutputs();
-    relays.disconnect();
-    Serial.println(webSocketConnected
-      ? "[WS] Connection lost; outputs disabled, stop latch preserved."
-      : "[WS] Connection attempt failed; check server address, port and backend logs. Outputs disabled.");
-    webSocketConnected = false;
-    return;
+    sendStopState(resetId);
+  } else if (result == RelayLeases::ResetResult::Duplicate) {
+    // A retransmitted acknowledgement request must not interrupt a later press.
+    sendStopState(resetId);
+  } else if (result == RelayLeases::ResetResult::NotReady) {
+    sendError("controller session is not ready");
+  } else if (result == RelayLeases::ResetResult::Stale) {
+    sendError("reset ID already used before STOP; request a fresh reset");
+  } else {
+    sendError("STOP is not latched; reset rejected");
   }
-  if (type == WStype_ERROR) {
-    disableOutputs();
-    relays.disconnect();
-    // Do not log untrusted payloads or HTTP headers, which can contain credentials.
-    Serial.printf("[WS] Protocol error event (%u bytes); disconnecting with outputs disabled.\n", static_cast<unsigned>(len));
-    webSocket.disconnect();
-    return;
-  }
-  if (type == WStype_CONNECTED) {
-    webSocketConnected = true;
-    disableOutputs();
-    relays.disconnect();
-    StaticJsonDocument<384> hello;
-    hello["case"] = "hello";
-    hello["protocol_version"] = protocolVersion;
-    hello["stop_latched"] = relays.stopped();
-    auto ids = hello.createNestedArray("lifts");
-    for (uint8_t i = 0; i < lift_count; ++i) ids.add(lift_begin + i);
-    hello["power_state"] = powerState ? 1 : 0;
-    hello["version"] = VERSION;
-    hello["ip"] = WiFi.localIP().toString();
-    hello["rssi"] = WiFi.RSSI();
-    sendMessage(hello);
-    Serial.println("[WS] Connected; awaiting protocol/session approval.");
-    return;
-  }
-  if (type != WStype_TEXT) return;
-  expireLeases();
-  if (len > 768) { sendError("message too large"); return; }
-  StaticJsonDocument<768> doc;
-  if (deserializeJson(doc, payload, len) || !doc.is<JsonObject>() || !doc["case"].is<const char*>()) {
-    sendError("invalid JSON message"); return;
-  }
-  const String command = doc["case"].as<String>();
-  if (command == "stop") {
-    disableOutputs();
-    relays.stop();
-    sendStopState();
-    return;
-  }
-  if (command == "controller_ready") {
-    if (!doc["protocol_version"].is<int>() || doc["protocol_version"].as<int>() != protocolVersion) {
-      disableOutputs(); relays.disconnect(); sendError("incompatible protocol version"); return;
-    }
-    if (!relays.ready()) {
-      disableOutputs();
-      relays.acceptSession();
-      // Resynchronize indication changes between hello and session acceptance.
-      powerState = readPowerSense();
-      StaticJsonDocument<96> power;
-      power["case"] = "power_state";
-      power["state"] = powerState ? 1 : 0;
-      sendMessage(power);
-    }
-    return;
-  }
-  if (command == "reset_stop") {
-    if (!validCorrelationId(doc["reset_id"])) { sendError("invalid reset ID"); return; }
-    disableOutputs();
-    if (!relays.resetStop()) { sendError("controller session is not ready"); return; }
-    sendStopState(doc["reset_id"].as<const char*>());
-    return;
-  }
-  if (command != "move_lift") { sendError("unknown command"); return; }
+}
+
+void handleMoveLift(JsonObjectConst doc) {
   const char* commandId = validCorrelationId(doc["command_id"]) ? doc["command_id"].as<const char*>() : nullptr;
   if (!doc["lift_id"].is<int>() || !doc["direction"].is<int>() || !doc["toggle"].is<int>() ||
       !commandId) { sendError("invalid move field types", commandId); return; }
   const int id = doc["lift_id"].as<int>(), direction = doc["direction"].as<int>(), toggle = doc["toggle"].as<int>();
   if (id < lift_begin || id >= lift_begin + lift_count || direction < 0 || direction > 2 ||
       (toggle != 0 && toggle != 1) || (toggle == 1 && !doc["renew"].is<bool>()) ||
-      (doc.containsKey("renew") && !doc["renew"].is<bool>())) { sendError("invalid move fields", commandId); return; }
+      (!doc["renew"].isUnbound() && !doc["renew"].is<bool>())) { sendError("invalid move fields", commandId); return; }
   const uint8_t index = id - lift_begin;
   const uint32_t commandTime = millis();
   const bool expiredDuringParsing = relays.expired(index, commandTime);
@@ -388,6 +362,75 @@ void webSocketEvent(WStype_t type, uint8_t* payload, size_t len) {
     case RelayLeases::Result::Stale: sendError("stale or expired command", commandId); break;
     default: sendError("invalid command", commandId); break;
   }
+}
+
+void webSocketEvent(WStype_t type, uint8_t* payload, size_t len) {
+  if (type == WStype_DISCONNECTED) {
+    clearControllerSession();
+    Serial.println(webSocketConnected
+      ? "[WS] Connection lost; outputs disabled, stop latch preserved."
+      : "[WS] Connection attempt failed; check server address, port and backend logs. Outputs disabled.");
+    webSocketConnected = false;
+    return;
+  }
+  if (type == WStype_ERROR) {
+    clearControllerSession();
+    // Do not log untrusted payloads or HTTP headers, which can contain credentials.
+    Serial.printf("[WS] Protocol error event (%u bytes); disconnecting with outputs disabled.\n", static_cast<unsigned>(len));
+    webSocket.disconnect();
+    return;
+  }
+  if (type == WStype_CONNECTED) {
+    webSocketConnected = true;
+    clearControllerSession();
+    MessageDocument<384> hello;
+    hello["case"] = "hello";
+    hello["protocol_version"] = protocolVersion;
+    hello["stop_latched"] = relays.stopped();
+    auto ids = hello["lifts"].to<JsonArray>();
+    for (uint8_t i = 0; i < lift_count; ++i) ids.add(lift_begin + i);
+    hello["power_state"] = powerState ? 1 : 0;
+    hello["version"] = VERSION;
+    hello["ip"] = WiFi.localIP().toString();
+    hello["rssi"] = WiFi.RSSI();
+    sendMessage(hello);
+    Serial.println("[WS] Connected; awaiting protocol/session approval.");
+    return;
+  }
+  if (type != WStype_TEXT) return;
+  expireLeases();
+  if (len > 768) { sendError("message too large"); return; }
+  MessageDocument<768> doc;
+  if (deserializeJson(doc, payload, len) || !doc.is<JsonObject>() || !isJsonText(doc["case"])) {
+    sendError("invalid JSON message"); return;
+  }
+  // The document owns this text until the callback returns; no String allocation needed.
+  const char* command = doc["case"].as<const char*>();
+  if (strcmp(command, "stop") == 0) {
+    disableOutputs();
+    relays.stop();
+    sendStopState();
+    return;
+  }
+  if (strcmp(command, "controller_ready") == 0) {
+    if (!doc["protocol_version"].is<int>() || doc["protocol_version"].as<int>() != protocolVersion) {
+      clearControllerSession(); sendError("incompatible protocol version"); return;
+    }
+    if (!relays.ready()) {
+      disableOutputs();
+      relays.acceptSession();
+      // Resynchronize indication changes between hello and session acceptance.
+      powerState = readPowerSense();
+      sendPowerState();
+    }
+    return;
+  }
+  if (strcmp(command, "reset_stop") == 0) {
+    handleResetStop(doc.as<JsonObjectConst>());
+    return;
+  }
+  if (strcmp(command, "move_lift") == 0) handleMoveLift(doc.as<JsonObjectConst>());
+  else sendError("unknown command");
 }
 
 void startWebSocket() {
@@ -415,8 +458,7 @@ void beginWifiAttempt() {
 void serviceNetwork() {
   if (WiFi.status() != WL_CONNECTED) {
     if (wasWifiConnected) {
-      disableOutputs();
-      relays.disconnect();
+      clearControllerSession();
       if (webSocketStarted) webSocket.disconnect();
       wasWifiConnected = false;
       Serial.println("[WIFI] Connection lost; outputs disabled.");
@@ -443,7 +485,9 @@ void serviceNetwork() {
   if (!otaChecked) { otaChecked = true; checkFirmwareUpdate(); }
   if (!webSocketStarted) startWebSocket();
   // No active relay may survive a potentially blocking reconnection attempt.
-  if (!webSocket.isConnected() && relays.anyActive()) { disableOutputs(); relays.disconnect(); }
+  if (!webSocket.isConnected() && relays.anyActive()) clearControllerSession();
+  // Cooperative deadlines: networking can still delay execution; this is not a
+  // hardware watchdog. Check immediately before and after servicing WebSockets.
   expireLeases();
   webSocket.loop();
   expireLeases();
@@ -488,7 +532,7 @@ void loop() {
   if (static_cast<uint32_t>(now - btnLastChangeMs) >= 30 && btnReading != btnLastStable) {
     btnLastStable = btnReading;
     if (btnLastStable == LOW && relays.ready()) {
-      StaticJsonDocument<160> doc;
+      MessageDocument<160> doc;
       doc["case"] = "error"; doc["detail"] = "Test Error: Manual Trigger";
       sendMessage(doc);
     }
@@ -498,11 +542,7 @@ void loop() {
     const bool nextPower = readPowerSense();
     if (nextPower != powerState) {
       powerState = nextPower;
-      if (relays.ready()) {
-        StaticJsonDocument<96> doc;
-        doc["case"] = "power_state"; doc["state"] = powerState ? 1 : 0;
-        sendMessage(doc);
-      }
+      if (relays.ready()) sendPowerState();
       Serial.printf("[PWR] Indication: %s\n", powerState ? "ON" : "OFF");
     }
   }

@@ -31,6 +31,11 @@ unter `data/`. Backend und Frontend besitzen Healthchecks. Ein als unhealthy
 markierter Container wird durch Compose allein nicht automatisch neu gestartet;
 der Prozessneustart greift bei tatsächlichem Beenden.
 
+Bei einem internen Watchdog-Fehler bleibt die Steuerung absichtlich bis zum
+Backend-Neustart gesperrt; die Freigabetaste hebt diesen Zustand nicht auf.
+Zuerst die Fehlerursache in den Backend-Logs prüfen. Die Health-API liefert
+dabei 503, ohne allein einen Compose-Neustart auszulösen.
+
 ## Aktualisierung von Protokoll 1
 
 1. Anlage stillsetzen und unbeabsichtigte Bewegung während der Arbeiten
@@ -144,12 +149,13 @@ Backend-Neustart bewusst keine Bewegung automatisch fort.
 
 ## Nachgewiesener Softwarestand
 
-In dieser Arbeitsumgebung wurden Python-Backendtests einschließlich
-WebSocket-Integration, Node-Frontendtests, Frontend-Produktionsbuild, der
-NodeMCUv2-Firmwarebuild und elf native Tests der C++-Relaiszustandsmaschine
-ausgeführt. Der laufende Containerstack wurde anschließend über Loopback und
-LAN-Adresse geprüft; ein echter Controller mit fünf Liften hat sich registriert.
-Die oben genannten Hardware-/Abschaltprüfungen bleiben erforderlich.
+Die automatisierten Prüfungen umfassen Python-Backendtests einschließlich
+WebSocket-Integration, Node-Frontendtests, den Frontend-Produktionsbuild,
+NodeMCUv2-Firmwarebuilds und native Tests der C++-Relaiszustandsmaschine.
+Der isolierte Protokolltest verwendet einen eigenen Backendprozess, temporäre
+Daten und simulierte Controller. Nach einem Update müssen der laufende Stack
+und die angeschlossenen Controller gesondert geprüft werden. Die oben genannten
+Hardware-/Abschaltprüfungen bleiben erforderlich.
 GitHub Actions ist vorbereitet und
 wird erst nach einem Push auf GitHub ausgeführt.
 

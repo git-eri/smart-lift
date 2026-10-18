@@ -47,6 +47,53 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(results))
         self.assertEqual(len(socket.messages), 25)
 
+    async def test_blocked_accept_does_not_hold_registry_lock_or_orphan_id(self):
+        entered = asyncio.Event()
+        class BlockedAccept(Socket):
+            async def accept(self):
+                entered.set()
+                await asyncio.Event().wait()
+
+        manager, healthy = ConnectionManager(), Socket()
+        await manager.connect("cliHealthy", healthy)
+        with patch("app.managers.connection_manager.SEND_TIMEOUT_SECONDS", 0.1):
+            pending = asyncio.create_task(manager.connect("cliWaiting", BlockedAccept()))
+            await asyncio.wait_for(entered.wait(), 1)
+            self.assertTrue(await asyncio.wait_for(manager.send("cliHealthy", "still responsive"), 0.05))
+            self.assertFalse(await pending)
+            self.assertTrue(await manager.connect("cliWaiting", Socket()))
+
+    async def test_blocked_duplicate_close_does_not_hold_registry_lock(self):
+        entered = asyncio.Event()
+        class BlockedClose(Socket):
+            async def close(self, **kwargs):
+                entered.set()
+                await asyncio.Event().wait()
+
+        manager, original = ConnectionManager(), Socket()
+        await manager.connect("con1", original)
+        with patch("app.managers.connection_manager.SEND_TIMEOUT_SECONDS", 0.1):
+            rejection = asyncio.create_task(manager.connect("con1", BlockedClose()))
+            await asyncio.wait_for(entered.wait(), 1)
+            self.assertTrue(await asyncio.wait_for(manager.send("con1", "still responsive"), 0.05))
+            self.assertFalse(await rejection)
+        self.assertTrue(await manager.is_current("con1", original))
+
+    async def test_cancelled_handshake_releases_only_its_own_reservation(self):
+        entered = asyncio.Event()
+        class BlockedAccept(Socket):
+            async def accept(self):
+                entered.set()
+                await asyncio.Event().wait()
+
+        manager = ConnectionManager()
+        pending = asyncio.create_task(manager.connect("con1", BlockedAccept()))
+        await asyncio.wait_for(entered.wait(), 1)
+        pending.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await pending
+        self.assertTrue(await manager.connect("con1", Socket()))
+
     async def test_send_failure_closes_socket_and_leaves_cleanup_to_endpoint(self):
         manager, socket = ConnectionManager(), Socket(fail=True)
         await manager.connect("con1", socket)

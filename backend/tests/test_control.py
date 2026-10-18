@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from app.managers.lift_manager import LiftManager
 from app.models.messages import HelloMsg, LiftMovedMsg, MoveLiftMsg, StopStateMsg
@@ -214,6 +215,42 @@ class ControlTests(unittest.IsolatedAsyncioTestCase):
             direction=0, toggle=1, command_id="press1",
         ))
         self.assertEqual(self.connections.messages("lift_moved")[-1]["con_id"], "con1")
+
+    async def test_positive_ack_after_deadline_cannot_restore_indicator_or_hold(self):
+        await self.manager.send_move_lift(self.move())
+        self.clock.now += 0.6
+        await self.manager.recv_lift_moved("con1", LiftMovedMsg(
+            case="lift_moved", lift_id=0, direction=0, toggle=1, command_id="press1",
+        ))
+        self.assertFalse(self.manager.active_lifts)
+        self.assertFalse(any(msg["toggle"] == 1 for msg in self.connections.messages("lift_moved")))
+        self.assertEqual(self.connections.messages("move_lift", "con1")[-1]["toggle"], 0)
+
+    async def test_watchdog_failure_cannot_be_reset_away(self):
+        await self.manager.send_move_lift(self.move())
+        with patch.object(self.manager, "expire_movements", AsyncMock(side_effect=RuntimeError("watchdog failed"))):
+            with self.assertLogs("smartlift", level="ERROR"), self.assertRaises(RuntimeError):
+                await self.manager.watchdog()
+        self.assertTrue(self.manager.watchdog_failed)
+        self.assertTrue(self.manager.stopped)
+        self.assertFalse(self.manager.active_lifts)
+
+        await self.manager.reset_stop("cli1")
+        self.assertFalse(self.manager._reset_waiting)
+        await self.manager.recv_stop_state("con1", StopStateMsg(
+            case="stop_state", stopped=False, reset_id="unrequested",
+        ))
+        await self.manager.send_move_lift(self.move(command="afterFailure"))
+        self.assertTrue(self.manager.stopped)
+        self.assertFalse(self.manager.active_lifts)
+        self.assertIn("watchdog", self.connections.messages("error")[-1]["detail"])
+
+    async def test_rest_snapshot_cannot_mutate_live_metadata(self):
+        snapshot = await self.manager.online_snapshot()
+        snapshot["con1"][0]["name"] = "Only in the detached snapshot"
+        snapshot["con1"].pop(1)
+        self.assertEqual(self.manager.online_lifts["con1"][0]["name"], "Lift 1")
+        self.assertIn(1, self.manager.online_lifts["con1"])
 
     async def test_concurrent_starts_have_one_owner(self):
         await asyncio.gather(*(self.manager.send_move_lift(self.move(

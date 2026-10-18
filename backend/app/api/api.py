@@ -1,15 +1,17 @@
-import hmac
+"""Read-only status endpoints and versioned firmware delivery."""
+
 import os
 import re
+from pathlib import Path
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Response, Header, HTTPException
 from fastapi.responses import FileResponse
 from packaging import version
-from pathlib import Path
-from typing import Dict, List, Optional
-
 from app.core.state import lm
 from app.core.logging import logger
+from app.core.protocol import CONTROLLER_ID_PATTERN
+from app.core.security import controller_token_valid
 
 router = APIRouter(tags=["api"])
 
@@ -19,16 +21,15 @@ router = APIRouter(tags=["api"])
 @router.get("/update/{con_id}")
 async def update(con_id: str, x_esp8266_version: Optional[str] = Header(default=None),
                  x_controller_token: Optional[str] = Header(default=None)):
-    """Serve the latest .bin for a controller if its reported version is older.
+    """Serve the highest available version newer than the controller's version.
 
-    Expects files like:
-      app/binaries/<version>.bin           (version discovery)
-      app/binaries/<con_id>-<version>.bin  (controller-specific binary to serve)
+    Both <version>.bin and <con_id>-<version>.bin are eligible. A controller-
+    specific file wins only when its version ties a generic file. Other peer
+    IDs, malformed filenames and symlinks are excluded from discovery.
     """
-    if not re.fullmatch(r"con[A-Za-z0-9_-]{1,61}", con_id):
+    if not re.fullmatch(CONTROLLER_ID_PATTERN, con_id):
         raise HTTPException(status_code=400, detail="Invalid controller ID")
-    token = os.environ.get("SMARTLIFT_CONTROLLER_TOKEN", "")
-    if token and not hmac.compare_digest(x_controller_token or "", token):
+    if not controller_token_valid(x_controller_token):
         raise HTTPException(status_code=403, detail="Controller authentication required")
     bin_dir = Path(os.environ.get("SMARTLIFT_BIN_DIR", "app/binaries"))
     candidates = []
@@ -67,14 +68,13 @@ async def get_online_lifts() -> Dict[str, Dict[int, Dict[str, object]]]:
       "con2": { ... }
     }
     """
-    # Return shallow copies to avoid leaking internal references
-    return {con_id: dict(lifts) for con_id, lifts in lm.online_lifts.items()}
+    return await lm.online_snapshot()
 
 
 @router.get("/lifts/online/controller/{con_id}")
 async def get_online_lifts_by_controller(con_id: str):
     """Lifts of a specific controller (or 404 if unknown)."""
-    lifts = lm.online_lifts.get(con_id)
+    lifts = (await lm.online_snapshot()).get(con_id)
     if lifts is None:
         return Response(status_code=404)
     return {"con_id": con_id, "lifts": dict(lifts)}
@@ -84,7 +84,7 @@ async def get_online_lifts_by_controller(con_id: str):
 async def get_online_lifts_flat() -> List[Dict[str, object]]:
     """Flattened list for easy frontend consumption."""
     result: List[Dict[str, object]] = []
-    for con_id, lifts in lm.online_lifts.items():
+    for con_id, lifts in (await lm.online_snapshot()).items():
         for lift_id, meta in lifts.items():
             result.append(
                 {
@@ -105,13 +105,13 @@ async def get_active_lifts() -> List[Dict[str, object]]:
 @router.get("/power")
 async def get_power_states() -> Dict[str, int]:
     """All known power states by controller (0/1)."""
-    return dict(lm.lift_power)
+    return await lm.power_snapshot()
 
 
 @router.get("/power/{con_id}")
 async def get_power_state(con_id: str):
     """Power state of a single controller, or null if unknown."""
-    return {"con_id": con_id, "state": lm.lift_power.get(con_id)}
+    return {"con_id": con_id, "state": (await lm.power_snapshot()).get(con_id)}
 
 
 # Keep the original URL after the static /flat route, so "flat" cannot be

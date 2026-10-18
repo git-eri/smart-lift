@@ -1,15 +1,40 @@
-// No send queue: a movement can only originate from a currently connected page.
+const INITIAL_RECONNECT_MS = 1000
+const MAX_RECONNECT_MS = 10000
+const MAX_BUFFERED_BYTES = 4096
+
+// There is no application send queue: reconnecting never replays a movement.
 export function createSocketTransport({
   url, createSocket = address => new WebSocket(address),
   onMessage = () => {}, onStatus = () => {}, later = setTimeout, cancelLater = clearTimeout,
 }) {
   let socket = null
   let reconnect = null
-  let delay = 1000
+  let delay = INITIAL_RECONNECT_MS
   let enabled = false
+  let retryGeneration = 0
+
+  function cancelReconnect() {
+    // A cancelled callback may already be queued; its generation also expires.
+    retryGeneration += 1
+    if (reconnect !== null) cancelLater(reconnect)
+    reconnect = null
+  }
+
+  function discard(next, close = true) {
+    if (socket !== next) return
+    // Status listeners synchronously release held buttons. Detach first so those
+    // releases cannot send through the socket that just failed.
+    socket = null
+    if (close) {
+      try { next.close() } catch { /* The failed socket is already detached. */ }
+    }
+    onStatus('disconnected')
+    scheduleReconnect()
+  }
 
   function connect() {
     if (!enabled || socket?.readyState === 0 || socket?.readyState === 1) return
+    cancelReconnect()
     onStatus('connecting')
     let next
     try {
@@ -22,7 +47,8 @@ export function createSocketTransport({
     socket = next
     next.onopen = () => {
       if (socket !== next) return
-      delay = 1000
+      cancelReconnect()
+      delay = INITIAL_RECONNECT_MS
       onStatus('connected')
     }
     next.onmessage = event => {
@@ -37,23 +63,20 @@ export function createSocketTransport({
       if (data && typeof data === 'object' && typeof data.case === 'string') onMessage(data)
     }
     next.onclose = () => {
-      if (socket !== next) return
-      socket = null
-      onStatus('disconnected')
-      scheduleReconnect()
+      discard(next, false)
     }
     next.onerror = () => {
-      if (socket !== next) return
-      onStatus('disconnected')
-      next.close()
+      discard(next)
     }
   }
 
   function scheduleReconnect() {
-    if (!enabled || reconnect !== null) return
+    if (!enabled || socket !== null || reconnect !== null) return
+    const generation = retryGeneration
     reconnect = later(() => {
+      if (generation !== retryGeneration) return
       reconnect = null
-      delay = Math.min(delay * 2, 10000)
+      delay = Math.min(delay * 2, MAX_RECONNECT_MS)
       connect()
     }, delay)
   }
@@ -64,26 +87,24 @@ export function createSocketTransport({
   }
 
   function send(payload) {
-    if (socket?.readyState !== 1) return false
-    if (socket.bufferedAmount > 4096) {
-      onStatus('disconnected')
-      socket.close()
+    const current = socket
+    if (current?.readyState !== 1) return false
+    if (current.bufferedAmount > MAX_BUFFERED_BYTES) {
+      discard(current)
       return false
     }
     try {
-      socket.send(JSON.stringify(payload))
+      current.send(JSON.stringify(payload))
       return true
     } catch {
-      onStatus('disconnected')
-      socket.close()
+      discard(current)
       return false
     }
   }
 
   function shutdown() {
     enabled = false
-    if (reconnect !== null) cancelLater(reconnect)
-    reconnect = null
+    cancelReconnect()
     const previous = socket
     socket = null
     previous?.close()

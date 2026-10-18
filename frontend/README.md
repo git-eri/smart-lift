@@ -1,11 +1,12 @@
-# Smart Lift Frontend
+# Smart Lift frontend
 
-Vue-Oberfläche mit gemeinsamem WebSocket-Dienst. HTTP und WebSockets laufen über
-denselben Ursprung unter `/api`; Hostnamen und Ports werden nicht in den Build eingebaut.
+The Vue application uses one shared WebSocket connection across routes. HTTP and
+WebSocket requests use the same origin under `/api`; hostnames and ports are not
+embedded in the build.
 
-## Lokal entwickeln
+## Development
 
-Node ab 22.12 verwenden. Der Docker-Build verwendet die getestete Version 22.23.3.
+Use Node 22.12 or newer. The Docker builder uses the tested Node 22.23.3 release.
 
 ```sh
 npm ci
@@ -14,59 +15,81 @@ npm run build
 npm run dev
 ```
 
-Vite leitet `/api` einschließlich WebSockets an `http://127.0.0.1:8000` weiter.
-Ein anderer Backend-Ursprung kann serverseitig mit `SMART_LIFT_API_TARGET` gesetzt
-werden. Beim Öffnen über einen anderen Host muss dieser auch in der
-Origin-Konfiguration des Backends zulässig sein.
+Vite proxies `/api`, including WebSockets, to `http://127.0.0.1:8000`.
+Set the server-side `SMART_LIFT_API_TARGET` environment variable to use another
+backend origin. When opening Vite through a different host, that browser origin
+must also be permitted by the backend's origin policy.
 
-## Bedienung und Protokoll
+## Responsibilities and state
 
-Nach einem Neustart und nach STOP bleibt die Steuerung gesperrt. Die sichtbare
-Freigabe-Taste startet einen bestätigten Reset über alle Controller. Eine Freigabe
-führt keine vorherige Bewegung fort; jede Bewegung benötigt einen neuen Tastendruck.
+- `src/services/socketTransport.js` owns socket identity, bounded reconnect
+  backoff and backpressure handling. It has no application send queue. A failed
+  socket is detached before status listeners run, because those listeners may
+  synchronously release buttons.
+- `src/services/websocket.js` exposes the shared Vue session state. The remembered
+  lift catalog preserves offline cards; a separate live-controller set and the
+  authoritative control snapshot determine whether a controller can be operated.
+- `src/services/pressController.js` owns held commands, their renewal timer and
+  acknowledgement correlation. Each press captures its command ID and control
+  epoch. Retired command IDs prevent delayed acknowledgements from reviving an
+  ended press or clearing a newer one.
+- `MainView.vue` connects page lifecycle events to cancellation, sorts all cards
+  numerically by lift ID and implements wheel navigation by one card. Equal IDs
+  on different controllers remain distinct. `Lift.vue` owns physical pointer and
+  keyboard input, including capture loss and cleanup after external cancellation.
+- `src/services/controllerSimulator.js` models controller-side leases and STOP.
+  Its last accepted reset ID survives STOP and reconnection: an acknowledgement
+  retry while already clear preserves movement; replay after STOP is rejected.
 
-Jeder Tastendruck erhält eine zufällige `command_id` und die aktuelle
-`control_epoch`. Während des Haltens sendet die Oberfläche alle 200 ms eine
-Erneuerung derselben Freigabe. Loslassen, Pointer-Abbruch, Fokusverlust,
-Hintergrundwechsel, Seitenwechsel, STOP und Verbindungsverlust beenden lokale
-Bedienungen. Der WebSocket-Dienst puffert keine Fahrbefehle. Alle drei Funktionen
-eines Lifts schließen sich gegenseitig aus.
+## Operation and protocol
 
-Die Anzeigen stellen bestätigte Relaisbefehle dar. Offline-Controller behalten
-ihren Platz in der Oberfläche; ihre Tasten sind gesperrt und die Anzeigen aus.
+Startup and STOP leave control latched. The visible reset button requests a reset
+acknowledged by all controllers. Reset never resumes an earlier movement; every
+movement requires a fresh press. There is no status hint during normal operation.
 
-Der Simulator unter `/simulator` verwendet Protokollversion 2, eine eigene
-750-ms-Freigabeüberwachung und denselben STOP-/Reset-Ablauf. Optional wählt der
-URL-Hash `#0-4` bis zu fünf Lift-IDs. Nur in einer Entwicklungsumgebung ohne
-`SMARTLIFT_CONTROLLER_TOKEN` verwenden: Browser-WebSockets können den erforderlichen
-Controller-Authentifizierungsheader nicht setzen. Für Tests keine produktive
-Controller-Authentifizierung abschalten.
+Each press receives a random `command_id` and captures the current `control_epoch`.
+While held, it renews the same command every 200 ms. Release, pointer cancellation,
+focus loss, backgrounding, route changes, STOP and connection loss end local
+presses. All three functions of a lift are mutually exclusive. Changing the card
+layout or navigating with the wheel also releases held buttons.
 
-## Prüfungen
+Indicators display acknowledged relay commands. Offline cards remain visible,
+with disabled controls and cleared indicators. They do not grant control simply
+because they remain in the catalog.
 
-`npm test` prüft Freigabeidentitäten, verzögerte Bestätigungen, gegenseitige
-Verriegelung, STOP-/Abbruchfälle, Wiederverbindungen und das Simulatorprotokoll mit
-kontrollierter Zeit und Fake-Sockets. `npm run build` prüft den Vue-Produktionsbuild.
+The simulator at `/simulator` uses protocol version 2, a local 750 ms lease and the
+same STOP/reset handshake. Each accepted renewal is acknowledged, as on the ESP.
+Expiry ends only the affected lift and cannot be undone by a late renewal. The
+optional URL hash `#0-4` selects up to five lift IDs.
 
-`npm run test:protocol` verbindet die tatsächlichen Frontend-Transport- und
-Tastendruckmodule über Vite mit einem isolierten Backend und dem Simulator. Der
-Test prüft die strikten Nachrichtenschemata, Erneuerung, Loslassen und STOP/Reset.
-Die Backend-Abhängigkeiten müssen vorhanden sein; `SMART_LIFT_PYTHON` wählt Python.
+Use the browser simulator only in a development environment without
+`SMARTLIFT_CONTROLLER_TOKEN`: browser WebSockets cannot set the required
+controller authentication header. Do not disable production controller
+authentication to run a test.
 
-`npm run test:browser` startet zusätzlich ein isoliertes Backend auf Port 18000,
-Vite auf Port 15173 und einen installierten Browser ohne sichtbares Fenster. Dafür
-müssen die Backend-Abhängigkeiten und ein Chromium-Browser vorhanden sein.
-`SMART_LIFT_PYTHON` wählt den Python-Pfad, `SMART_LIFT_BROWSER` den Browser-Pfad
-(Standard: Microsoft Edge unter Windows). Port 19222 wird für DevTools verwendet.
-Der Test prüft Halten, Erneuern, Loslassen, Tastatur, Pointer-Abbruch, Fokusverlust,
-STOP, Freigabe ohne Wiederanlauf und einen Controller-Abbruch. Daten und
-Browserprofil liegen in einem temporären Verzeichnis.
+## Checks
+
+`npm test` checks lease identity, delayed acknowledgements, exclusive functions,
+synchronous disconnect handling, STOP/reset replay, reconnect timers and simulator
+expiry using controlled clocks and fake sockets. `npm run build` checks the Vue
+production build.
+
+`npm run test:protocol` connects the actual frontend transport and press modules
+through Vite to an isolated backend and the simulator. It checks strict message
+schemas, renewal, release and STOP/reset. Backend dependencies must be available;
+`SMART_LIFT_PYTHON` selects the Python executable.
+
+`npm run test:browser` additionally launches an installed Chromium browser without
+a visible window. `SMART_LIFT_BROWSER` selects the executable; the default is
+Microsoft Edge on Windows. Backend port 18000, Vite port 15173 and DevTools port
+19222 must be free. The test never reuses an existing service. Data and browser
+profiles use a temporary directory. It checks pointer/keyboard input, cancellation,
+focus loss, STOP, reset without replay and controller disconnection.
 
 ## Container
 
-Der Build führt `npm ci`, `npm test` und `npm run build` aus. Nginx läuft als
-Benutzer `nginx` auf Port 8080; `/healthz` liefert den Containerstatus. Die
-SPA-Konfiguration unterstützt direkte Aufrufe von `/admin` und `/simulator`.
-HTML wird vor jeder Wiederverwendung validiert, versionierte Build-Assets dürfen
-langfristig zwischengespeichert werden. In der Compose-Installation übernimmt der
-äußere Proxy die Weiterleitung von `/api` zum Backend.
+The builder runs `npm ci`, `npm test` and `npm run build`. Nginx runs as user `nginx`
+on port 8080; `/healthz` supplies its healthcheck. SPA routing supports direct
+requests for `/admin` and `/simulator`. HTML is revalidated before reuse, while
+versioned build assets can be cached long term. In Compose, the outer proxy routes
+`/api` requests to the backend.

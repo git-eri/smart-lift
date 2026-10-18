@@ -3,6 +3,7 @@ import { randomId, websocketUrl } from './urls.js'
 import { createSocketTransport } from './socketTransport.js'
 
 const listeners = new Set()
+// One browser identity and transport survive route changes; held presses do not.
 const clientId = randomId('cli')
 export const connectionStatus = ref('disconnected')
 export const connected = computed(() => connectionStatus.value === 'connected')
@@ -31,7 +32,8 @@ const transport = createSocketTransport({
   onMessage(data) {
     switch (data.case) {
       case 'online_lifts':
-        // Keep known cards visible during controller outages.
+        // The catalog remembers offline cards; only this separate live set grants
+        // control. Replacing each live group also applies authoritative renames.
         onlineControllers.value = new Set(Object.keys(data.lifts || {}))
         onlineLifts.value = { ...onlineLifts.value, ...data.lifts }
         break
@@ -42,6 +44,8 @@ const transport = createSocketTransport({
         if (data.con_id) powerStates.value = { ...powerStates.value, [data.con_id]: data.state === 1 ? 1 : 0 }
         break
       case 'control_state':
+        // Publish the epoch first: synchronous view watchers release old presses
+        // before any newly ready controller can accept another one.
         controlEpoch.value = typeof data.control_epoch === 'string' ? data.control_epoch : null
         controllers.value = { ...data.controllers }
         stopped.value = data.stopped !== false
@@ -71,6 +75,7 @@ function send(payload) {
 }
 
 function emergencyStop() {
+  // Lock local input immediately rather than waiting for the server's broadcast.
   stopped.value = true
   resetPending.value = false
   if (!send({ case: 'stop' })) brokerError.value = 'Keine Verbindung. STOP konnte nicht übertragen werden.'

@@ -5,8 +5,10 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
-Identifier = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
-LiftId = Annotated[StrictInt, Field(ge=0, le=1_000_000)]
+from app.core.protocol import CONTROLLER_ID_PATTERN, IDENTIFIER_PATTERN, MAX_LIFT_ID, PROTOCOL_VERSION
+
+Identifier = Annotated[str, Field(min_length=1, max_length=64, pattern=IDENTIFIER_PATTERN)]
+LiftId = Annotated[StrictInt, Field(ge=0, le=MAX_LIFT_ID)]
 Direction = Annotated[StrictInt, Field(ge=0, le=2)]
 Toggle = Annotated[StrictInt, Field(ge=0, le=1)]
 
@@ -32,8 +34,10 @@ class BaseMsg(BaseModel):
 
 
 class HelloMsg(BaseMsg):
+    """Register a compatible controller before any actuator command is allowed."""
+
     case: Literal[Case.HELLO]
-    protocol_version: Annotated[StrictInt, Field(ge=2, le=2)]
+    protocol_version: Annotated[StrictInt, Field(ge=PROTOCOL_VERSION, le=PROTOCOL_VERSION)]
     lifts: Annotated[list[LiftId], Field(min_length=1, max_length=64)]
     stop_latched: StrictBool
     power_state: Toggle
@@ -65,9 +69,11 @@ class StopStateMsg(BaseMsg):
 
 
 class MoveLiftMsg(BaseMsg):
+    """One press identity: renewals cannot create or take over a movement."""
+
     case: Literal[Case.MOVE_LIFT]
     client_id: Identifier = "unassigned"
-    con_id: Annotated[str, Field(min_length=4, max_length=64, pattern=r"^con[A-Za-z0-9_-]+$")]
+    con_id: Annotated[str, Field(min_length=4, max_length=64, pattern=CONTROLLER_ID_PATTERN)]
     lift_id: LiftId
     direction: Direction
     toggle: Toggle

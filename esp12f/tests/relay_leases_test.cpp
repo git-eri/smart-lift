@@ -5,21 +5,22 @@
 #include "../RelayLeases.h"
 
 using Result = RelayLeases::Result;
+using ResetResult = RelayLeases::ResetResult;
 
 static void arm(RelayLeases& state) {
   state.acceptSession();
-  assert(state.resetStop());
+  assert(state.resetStop("initial-reset") == ResetResult::Accepted);
 }
 
 static void test_boot_and_session_gate() {
   RelayLeases state;
   assert(state.stopped() && !state.ready() && !state.anyActive());
-  assert(!state.resetStop());
+  assert(state.resetStop("initial-reset") == ResetResult::NotReady);
   assert(state.execute(0, 0, 1, "press", false, 0) == Result::NotReady);
   state.acceptSession();
   assert(state.stopped());
   assert(state.execute(0, 0, 1, "press", false, 0) == Result::Stopped);
-  assert(state.resetStop());
+  assert(state.resetStop("initial-reset") == ResetResult::Accepted);
   assert(!state.anyActive());
   assert(state.execute(0, 0, 1, "press", false, 0) == Result::Accepted);
 }
@@ -101,11 +102,11 @@ static void test_stop_latch_survives_reconnection() {
   assert(state.stopped() && !state.anyActive());
   state.disconnect();
   assert(!state.ready() && state.stopped());
-  assert(!state.resetStop());
+  assert(state.resetStop("second-reset") == ResetResult::NotReady);
   state.acceptSession();
   assert(state.stopped());
   assert(state.execute(0, 0, 1, "b", false, 10) == Result::Stopped);
-  assert(state.resetStop());
+  assert(state.resetStop("second-reset") == ResetResult::Accepted);
   assert(!state.anyActive());
   assert(state.execute(0, 0, 1, "a", true, 20) == Result::Stale);
   assert(state.execute(0, 0, 1, "b", false, 30) == Result::Accepted);
@@ -150,6 +151,94 @@ static void test_invalid_fields_and_command_length() {
   assert(state.execute(0, 0, 1, tooLong, false, 0) == Result::Accepted);
 }
 
+static void test_duplicate_reset_preserves_live_press() {
+  RelayLeases state;
+  arm(state);
+  assert(state.execute(0, 0, 1, "press", false, 100) == Result::Accepted);
+  assert(state.resetStop("initial-reset") == ResetResult::Duplicate);
+  assert(!state.stopped() && state.at(0).active && state.at(0).renewedAt == 100);
+  assert(state.execute(0, 0, 1, "press", true, 500) == Result::Accepted);
+}
+
+static void test_previous_reset_cannot_clear_later_stop() {
+  RelayLeases state;
+  arm(state);
+  state.stop();
+  assert(state.resetStop("initial-reset") == ResetResult::Stale);
+  assert(state.stopped());
+  state.disconnect();
+  state.acceptSession();
+  assert(state.resetStop("initial-reset") == ResetResult::Stale);
+  assert(state.stopped());
+  assert(state.resetStop("fresh-reset") == ResetResult::Accepted);
+  assert(!state.stopped() && !state.anyActive());
+}
+
+static void test_different_reset_while_clear_preserves_live_press() {
+  RelayLeases state;
+  arm(state);
+  assert(state.execute(0, 1, 1, "press", false, 100) == Result::Accepted);
+  assert(state.resetStop("unrelated-reset") == ResetResult::NotStopped);
+  assert(state.at(0).active && !state.stopped());
+  assert(state.execute(0, 1, 1, "press", true, 500) == Result::Accepted);
+}
+
+static void test_invalid_reset_does_not_clear_stop() {
+  RelayLeases state;
+  state.acceptSession();
+  assert(state.resetStop("") == ResetResult::Invalid);
+  assert(state.resetStop(nullptr) == ResetResult::Invalid);
+  assert(state.resetStop("not a valid ID") == ResetResult::Invalid);
+  char tooLong[66];
+  memset(tooLong, 'a', 65); tooLong[65] = 0;
+  assert(state.resetStop(tooLong) == ResetResult::Invalid);
+  assert(state.stopped());
+  assert(state.resetStop("fresh-reset") == ResetResult::Accepted);
+}
+
+static void test_duplicate_session_approval_preserves_live_press() {
+  RelayLeases state;
+  arm(state);
+  assert(state.execute(0, 2, 1, "press", false, 100) == Result::Accepted);
+  state.acceptSession();
+  assert(state.at(0).active && state.ready() && !state.stopped());
+}
+
+static void test_expiry_helpers_reject_out_of_range_indices() {
+  RelayLeases state;
+  arm(state);
+  assert(state.execute(0, 0, 1, "press", false, 0) == Result::Accepted);
+  assert(!state.expired(RelayLeases::count, 1000));
+  assert(!state.expired(255, 1000));
+  state.expire(RelayLeases::count);
+  state.expire(255);
+  assert(state.at(0).active);
+}
+
+static void test_text_validation_rejects_embedded_nul_aliases() {
+  const char command[] = "reset_stop\0extra";
+  const char server[] = "server.lan\0.other";
+  assert(!ProtocolText::isText(command, sizeof(command) - 1));
+  assert(!ProtocolText::isText(server, sizeof(server) - 1));
+  assert(ProtocolText::isText("", 0));
+  assert(ProtocolText::isText("reset_stop", 10));
+  assert(!ProtocolText::isText(nullptr, 0));
+}
+
+static void test_identifier_validation_matches_wire_rules() {
+  const char embeddedNul[] = "valid\0suffix";
+  assert(!ProtocolText::isIdentifier(embeddedNul, sizeof(embeddedNul) - 1));
+  assert(!ProtocolText::isIdentifier("has space"));
+  assert(!ProtocolText::isIdentifier("contains.dot"));
+  assert(!ProtocolText::isIdentifier("unicode-\xc3\xa4"));
+  assert(ProtocolText::isIdentifier("Press_123-next"));
+  char boundary[66];
+  memset(boundary, 'a', 65); boundary[65] = 0;
+  assert(!ProtocolText::isIdentifier(boundary));
+  boundary[64] = 0;
+  assert(ProtocolText::isIdentifier(boundary));
+}
+
 int main() {
   test_boot_and_session_gate();
   test_all_three_directions_interlock();
@@ -162,5 +251,13 @@ int main() {
   test_disconnect_clears_movements_without_changing_latch();
   test_millis_wraparound();
   test_invalid_fields_and_command_length();
-  puts("11 relay lease tests passed");
+  test_duplicate_reset_preserves_live_press();
+  test_previous_reset_cannot_clear_later_stop();
+  test_different_reset_while_clear_preserves_live_press();
+  test_invalid_reset_does_not_clear_stop();
+  test_duplicate_session_approval_preserves_live_press();
+  test_expiry_helpers_reject_out_of_range_indices();
+  test_text_validation_rejects_embedded_nul_aliases();
+  test_identifier_validation_matches_wire_rules();
+  puts("19 relay lease and protocol text tests passed");
 }

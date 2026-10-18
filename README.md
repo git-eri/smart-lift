@@ -12,7 +12,7 @@ unabhängig von dieser Software.
 
 ## Betriebsstand
 
-Firmware `0.06.02`, Protokoll **2**. Backend, Frontend und Firmware müssen
+Firmware `0.06.03`, Protokoll **2**. Backend, Frontend und Firmware müssen
 gemeinsam aktualisiert werden; Controller mit dem alten Protokoll werden
 abgewiesen. Die Software enthält:
 
@@ -69,10 +69,11 @@ arduino-cli lib install ArduinoJson@7.4.3 WebSockets@2.6.1
 bash init.sh
 ```
 
-WebSockets 2.7.2 wird ebenfalls im Firmware-Build geprüft; die Firmware verwendet
-keine internen Disconnect-Überladungen dieser Bibliothek.
+Die Firmware-Build-Matrix prüft ArduinoJson 6.21.5 und 7.4.3 jeweils mit
+WebSockets 2.6.1 und 2.7.2. Die Firmware verwendet keine internen
+Disconnect-Überladungen der WebSocket-Bibliothek.
 
-`init.sh` erzeugt `binaries/0.06.02.bin` und übernimmt vorhandene
+`init.sh` erzeugt `binaries/0.06.03.bin` und übernimmt vorhandene
 `lift_info.json` einmalig nach `data/lift_info.json`. Der Build setzt
 `WEBSOCKETS_TCP_TIMEOUT=100` für alle C++-Übersetzungseinheiten; diesen Parameter
 auch beim manuellen IDE-Build setzen.
@@ -143,6 +144,9 @@ g++ -std=c++11 -Wall -Wextra -Werror esp12f/tests/relay_leases_test.cpp -o relay
 GitHub Actions führt Backendtests, Frontendtests/-Build/-Audit sowie ESP-Build
 und native Relaisprüfungen aus. Details zur Kommunikation:
 [docs/protocol.md](docs/protocol.md).
+
+Eine englische Entwicklerdokumentation zu Modulen, Zuständen, Sperren und
+Erweiterungen steht in [docs/architecture.md](docs/architecture.md).
 
 ## Hardware
 
