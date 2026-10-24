@@ -18,3 +18,5 @@ node_modules/
 dist/
 data/
 .pytest_cache/
+
+.DS_Store
