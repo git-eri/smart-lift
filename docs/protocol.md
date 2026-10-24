@@ -10,7 +10,7 @@ Maximal 128 Verbindungen und 4096 Byte pro Backend-Nachricht.
 Controller senden zuerst innerhalb von fünf Sekunden:
 
 ```json
-{"case":"hello","protocol_version":2,"lifts":[0,1,2,3,4],"power_state":1,"stop_latched":true,"version":"0.06.03"}
+{"case":"hello","protocol_version":2,"lifts":[0,1,2,3,4],"power_state":1,"stop_latched":true,"version":"0.06.04"}
 ```
 
 Optional: `ip`, `rssi`. Alte oder ungültige Hello-Nachrichten schließen die

@@ -1,5 +1,5 @@
 // Gets checked by the server to determine if an update is needed.
-#define VERSION "0.06.03"
+#define VERSION "0.06.04"
 // Compile every translation unit with -DWEBSOCKETS_TCP_TIMEOUT=100 (see init.sh).
 
 #include <Arduino.h>
@@ -35,8 +35,6 @@ const uint8_t lifts[lift_count][3] = {
 WebSocketsClient webSocket;
 bool webSocketConnected = false;
 RelayLeases relays;
-BearSSL::WiFiClientSecure clientSecure;
-WiFiClient clientPlain;
 // These objects outlive both the OTA client and every WebSocket reconnection.
 BearSSL::X509List* trustAnchors = nullptr;
 uint8_t fingerprintBytes[20] = {};
@@ -277,7 +275,8 @@ bool loadConfig() {
   }
   if (tlsMode != TLSMode::PLAINTEXT &&
       !loadTrustAnchors(tlsMode == TLSMode::SELF_SIGNED ? "/server.crt" : "/isrg_root_x1.pem")) return false;
-  if (controllerToken.length()) extraHeaders = "X-Controller-Token: " + controllerToken + "\r\n";
+  // WebSocketsClient appends CRLF itself; a trailing CRLF would end the headers early.
+  if (controllerToken.length()) extraHeaders = "X-Controller-Token: " + controllerToken;
   Serial.printf("[CFG] Validated configuration; TLS mode: %s\n", mode.c_str());
   return true;
 }
@@ -290,6 +289,10 @@ bool readPowerSense() {
 // Only called before a WebSocket session can accept movements. Never re-enable OE here.
 void checkFirmwareUpdate() {
   disableOutputs();
+  // Release all OTA TLS buffers on return, even if the peer already closed the
+  // socket and HTTPClient::end() therefore skips stop(). WSS needs that memory.
+  BearSSL::WiFiClientSecure clientSecure;
+  WiFiClient clientPlain;
   const String url = String(tlsMode == TLSMode::PLAINTEXT ? "http://" : "https://") +
                      server + ":" + String(port) + updatePath + con_id;
   HTTPClient http;
@@ -443,6 +446,8 @@ void startWebSocket() {
   Serial.printf("[WS] Target: %s://%s:%u%s; controller token: %s\n",
                 tlsMode == TLSMode::PLAINTEXT ? "ws" : "wss", server.c_str(), port,
                 uri.c_str(), controllerToken.length() ? "configured" : "not configured");
+  Serial.printf("[WS] Free heap: %u bytes; largest block: %u bytes\n",
+                ESP.getFreeHeap(), ESP.getMaxFreeBlockSize());
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(5000);
   webSocket.enableHeartbeat(1000, 1000, 2);

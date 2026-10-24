@@ -12,7 +12,7 @@ unabhängig von dieser Software.
 
 ## Betriebsstand
 
-Firmware `0.06.03`, Protokoll **2**. Backend, Frontend und Firmware müssen
+Firmware `0.06.04`, Protokoll **2**. Backend, Frontend und Firmware müssen
 gemeinsam aktualisiert werden; Controller mit dem alten Protokoll werden
 abgewiesen. Die Software enthält:
 
@@ -73,7 +73,7 @@ Die Firmware-Build-Matrix prüft ArduinoJson 6.21.5 und 7.4.3 jeweils mit
 WebSockets 2.6.1 und 2.7.2. Die Firmware verwendet keine internen
 Disconnect-Überladungen der WebSocket-Bibliothek.
 
-`init.sh` erzeugt `binaries/0.06.03.bin` und übernimmt vorhandene
+`init.sh` erzeugt `binaries/0.06.04.bin` und übernimmt vorhandene
 `lift_info.json` einmalig nach `data/lift_info.json`. Der Build setzt
 `WEBSOCKETS_TCP_TIMEOUT=100` für alle C++-Übersetzungseinheiten; diesen Parameter
 auch beim manuellen IDE-Build setzen.

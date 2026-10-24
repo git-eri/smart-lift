@@ -102,6 +102,22 @@ Bei Origin- oder Token-Ablehnung protokolliert das Backend jetzt die Ursache.
 Eine unpassende `con_id`, ein falscher Pfad oder inkompatibles Hello wird nicht
 durch Lockerung dieser Prüfungen behoben.
 
+### OTA funktioniert, aber WSS erreicht das Backend nicht
+
+Bei `[OTA] Firmware is current.` wurde das Controller-Token bereits vom
+Update-Endpunkt akzeptiert. Fehlende WebSocket-Versuche in den Backend-Logs
+können auf einen Abbruch vor dem Backend hindeuten; auch die Logs des
+vorgeschalteten Proxys prüfen.
+
+Firmware ab `0.06.04` gibt den OTA-TLS-Client einschließlich seiner Puffer vor
+dem WebSocket-Aufbau vollständig frei. Ein globaler OTA-Client konnte diese
+Puffer nach einem vom Server geschlossenen Socket weiter belegen und damit
+den Speicher für WSS einschränken. Außerdem wurde eine zusätzliche Leerzeile
+im WebSocket-Handshake mit Controller-Token entfernt. Beim Start von WSS werden
+freier Heap und größter freier Block seriell ausgegeben. Die Zertifikatsprüfung
+bleibt aktiv. Für diese Korrektur die Firmware aktualisieren; eine Änderung der
+ESP-Konfiguration oder CA-Datei ist nicht erforderlich.
+
 ### Browser meldet einen blockierten file-Zugriff
 
 Die Oberfläche wird über HTTP/HTTPS geöffnet. Ihre gebauten Assets und API-URLs
